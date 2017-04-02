@@ -18,7 +18,6 @@
 package org.owasp.dependencycheck.data.update.nvd;
 
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.sql.SQLException;
 import java.util.List;
@@ -26,13 +25,13 @@ import java.util.Map;
 import java.util.concurrent.Callable;
 import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.parsers.SAXParser;
-import javax.xml.parsers.SAXParserFactory;
 import org.owasp.dependencycheck.data.nvdcve.CveDB;
 import org.owasp.dependencycheck.data.nvdcve.DatabaseException;
 import org.owasp.dependencycheck.data.nvdcve.DatabaseProperties;
 import org.owasp.dependencycheck.data.update.exception.UpdateException;
 import org.owasp.dependencycheck.dependency.VulnerableSoftware;
 import org.owasp.dependencycheck.utils.Settings;
+import org.owasp.dependencycheck.utils.XmlUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.xml.sax.SAXException;
@@ -142,9 +141,7 @@ public class ProcessTask implements Callable<ProcessTask> {
     protected void importXML(File file, File oldVersion) throws ParserConfigurationException,
             SAXException, IOException, SQLException, DatabaseException, ClassNotFoundException {
 
-        final SAXParserFactory factory = SAXParserFactory.newInstance();
-        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-        final SAXParser saxParser = factory.newSAXParser();
+        final SAXParser saxParser = XmlUtils.buildSecureSaxParser();
 
         final NvdCve12Handler cve12Handler = new NvdCve12Handler();
         saxParser.parse(oldVersion, cve12Handler);
@@ -169,19 +166,7 @@ public class ProcessTask implements Callable<ProcessTask> {
             importXML(filePair.getFirst(), filePair.getSecond());
             cveDB.commit();
             properties.save(filePair.getNvdCveInfo());
-        } catch (FileNotFoundException ex) {
-            throw new UpdateException(ex);
-        } catch (ParserConfigurationException ex) {
-            throw new UpdateException(ex);
-        } catch (SAXException ex) {
-            throw new UpdateException(ex);
-        } catch (IOException ex) {
-            throw new UpdateException(ex);
-        } catch (SQLException ex) {
-            throw new UpdateException(ex);
-        } catch (DatabaseException ex) {
-            throw new UpdateException(ex);
-        } catch (ClassNotFoundException ex) {
+        } catch (ParserConfigurationException | SAXException | SQLException | DatabaseException | ClassNotFoundException | IOException ex) {
             throw new UpdateException(ex);
         } finally {
             filePair.cleanup();

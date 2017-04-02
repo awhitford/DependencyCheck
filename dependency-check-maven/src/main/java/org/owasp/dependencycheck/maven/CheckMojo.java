@@ -25,6 +25,7 @@ import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
+import org.owasp.dependencycheck.Engine;
 import org.owasp.dependencycheck.data.nvdcve.DatabaseException;
 import org.owasp.dependencycheck.exception.ExceptionCollection;
 import org.owasp.dependencycheck.exception.ReportException;
@@ -44,6 +45,13 @@ import org.owasp.dependencycheck.utils.Settings;
         requiresOnline = true
 )
 public class CheckMojo extends BaseDependencyCheckMojo {
+
+    /**
+     * The name of the report in the site.
+     */
+    @SuppressWarnings("CanBeFinal")
+    @Parameter(property = "name", defaultValue = "dependency-check", required = true)
+    private String name = "dependency-check";
 
     /**
      * Returns whether or not a the report can be generated.
@@ -74,7 +82,7 @@ public class CheckMojo extends BaseDependencyCheckMojo {
      */
     @Override
     public void runCheck() throws MojoExecutionException, MojoFailureException {
-        MavenEngine engine = null;
+        Engine engine = null;
         try {
             engine = initializeEngine();
         } catch (DatabaseException ex) {
@@ -124,13 +132,6 @@ public class CheckMojo extends BaseDependencyCheckMojo {
         }
         Settings.cleanup();
     }
-
-    /**
-     * The name of the report in the site.
-     */
-    @SuppressWarnings("CanBeFinal")
-    @Parameter(property = "name", defaultValue = "dependency-check", required = true)
-    private String name = "dependency-check";
 
     /**
      * Returns the report name.

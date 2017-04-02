@@ -181,7 +181,7 @@ public class PythonDistributionAnalyzer extends AbstractFileTypeAnalyzer {
     }
 
     @Override
-    protected void analyzeFileType(Dependency dependency, Engine engine)
+    protected void analyzeDependency(Dependency dependency, Engine engine)
             throws AnalysisException {
         final File actualFile = dependency.getActualFile();
         if (WHL_FILTER.accept(actualFile)) {
@@ -273,7 +273,7 @@ public class PythonDistributionAnalyzer extends AbstractFileTypeAnalyzer {
      * Deletes any files extracted from the Wheel during analysis.
      */
     @Override
-    public void close() {
+    public void closeAnalyzer() {
         if (tempFileLocation != null && tempFileLocation.exists()) {
             LOGGER.debug("Attempting to delete temporary files");
             final boolean success = FileUtils.delete(tempFileLocation);
@@ -360,22 +360,12 @@ public class PythonDistributionAnalyzer extends AbstractFileTypeAnalyzer {
         if (null == manifest) {
             LOGGER.debug("Manifest file not found.");
         } else {
-            InputStream in = null;
-            try {
-                in = new BufferedInputStream(new FileInputStream(manifest));
+            try (InputStream in = new BufferedInputStream(new FileInputStream(manifest))) {
                 result.load(in);
-            } catch (MessagingException e) {
+            } catch (MessagingException | FileNotFoundException e) {
                 LOGGER.warn(e.getMessage(), e);
-            } catch (FileNotFoundException e) {
-                LOGGER.warn(e.getMessage(), e);
-            } finally {
-                if (in != null) {
-                    try {
-                        in.close();
-                    } catch (IOException ex) {
-                        LOGGER.debug("failed to close input stream", ex);
-                    }
-                }
+            } catch (IOException ex) {
+                LOGGER.warn(ex.getMessage(), ex);
             }
         }
         return result;

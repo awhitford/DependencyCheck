@@ -86,7 +86,7 @@ public class SuppressionRuleTest extends BaseTest {
     @Test
     public void testGetCvssBelow() {
         SuppressionRule instance = new SuppressionRule();
-        List<Float> cvss = new ArrayList<Float>();
+        List<Float> cvss = new ArrayList<>();
         instance.setCvssBelow(cvss);
         assertFalse(instance.hasCvssBelow());
         instance.addCvssBelow(0.7f);
@@ -101,7 +101,7 @@ public class SuppressionRuleTest extends BaseTest {
     @Test
     public void testCwe() {
         SuppressionRule instance = new SuppressionRule();
-        List<String> cwe = new ArrayList<String>();
+        List<String> cwe = new ArrayList<>();
         instance.setCwe(cwe);
         assertFalse(instance.hasCwe());
         instance.addCwe("2");
@@ -116,7 +116,7 @@ public class SuppressionRuleTest extends BaseTest {
     @Test
     public void testCve() {
         SuppressionRule instance = new SuppressionRule();
-        List<String> cve = new ArrayList<String>();
+        List<String> cve = new ArrayList<>();
         instance.setCve(cve);
         assertFalse(instance.hasCve());
         instance.addCve("CVE-2013-1337");
@@ -355,6 +355,14 @@ public class SuppressionRuleTest extends BaseTest {
         cpe.setRegex(true);
         cpe.setCaseSensitive(false);
         expResult = false;
+        result = instance.identifierMatches("cpe", cpe, identifier);
+        assertEquals(expResult, result);
+        
+        identifier = new Identifier("cpe", "cpe:/a:apache:tomcat:7.0", "some url not needed for this test");
+        cpe.setValue("cpe:/a:apache:tomcat");
+        cpe.setRegex(false);
+        cpe.setCaseSensitive(false);
+        expResult = true;
         result = instance.identifierMatches("cpe", cpe, identifier);
         assertEquals(expResult, result);
 

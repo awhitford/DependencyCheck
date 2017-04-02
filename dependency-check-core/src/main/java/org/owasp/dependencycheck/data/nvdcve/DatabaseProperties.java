@@ -17,13 +17,14 @@
  */
 package org.owasp.dependencycheck.data.nvdcve;
 
-import java.text.DateFormat;
-import java.text.SimpleDateFormat;
-import java.util.Date;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Properties;
 import java.util.TreeMap;
+import javax.annotation.concurrent.ThreadSafe;
+import org.joda.time.DateTime;
+import org.joda.time.format.DateTimeFormat;
+import org.joda.time.format.DateTimeFormatter;
 import org.owasp.dependencycheck.data.update.nvd.NvdCveInfo;
 import org.owasp.dependencycheck.data.update.exception.UpdateException;
 import org.slf4j.Logger;
@@ -31,9 +32,11 @@ import org.slf4j.LoggerFactory;
 
 /**
  * This is a wrapper around a set of properties that are stored in the database.
+ * This class is safe to be accessed from multiple threads in parallel.
  *
  * @author Jeremy Long
  */
+@ThreadSafe
 public class DatabaseProperties {
 
     /**
@@ -41,21 +44,24 @@ public class DatabaseProperties {
      */
     private static final Logger LOGGER = LoggerFactory.getLogger(DatabaseProperties.class);
     /**
-     * Modified key word, used as a key to store information about the modified file (i.e. the containing the last 8 days of
-     * updates)..
+     * Modified key word, used as a key to store information about the modified
+     * file (i.e. the containing the last 8 days of updates)..
      */
     public static final String MODIFIED = "Modified";
     /**
-     * The properties file key for the last checked field - used to store the last check time of the Modified NVD CVE xml file.
+     * The properties file key for the last checked field - used to store the
+     * last check time of the Modified NVD CVE xml file.
      */
     public static final String LAST_CHECKED = "NVD CVE Checked";
     /**
-     * The properties file key for the last updated field - used to store the last updated time of the Modified NVD CVE xml file.
+     * The properties file key for the last updated field - used to store the
+     * last updated time of the Modified NVD CVE xml file.
      */
     public static final String LAST_UPDATED = "NVD CVE Modified";
     /**
-     * Stores the last updated time for each of the NVD CVE files. These timestamps should be updated if we process the modified
-     * file within 7 days of the last update.
+     * Stores the last updated time for each of the NVD CVE files. These
+     * timestamps should be updated if we process the modified file within 7
+     * days of the last update.
      */
     public static final String LAST_UPDATED_BASE = "NVD CVE ";
     /**
@@ -121,7 +127,8 @@ public class DatabaseProperties {
     }
 
     /**
-     * Returns the property value for the given key. If the key is not contained in the underlying properties null is returned.
+     * Returns the property value for the given key. If the key is not contained
+     * in the underlying properties null is returned.
      *
      * @param key the property key
      * @return the value of the property
@@ -131,8 +138,8 @@ public class DatabaseProperties {
     }
 
     /**
-     * Returns the property value for the given key. If the key is not contained in the underlying properties the default value is
-     * returned.
+     * Returns the property value for the given key. If the key is not contained
+     * in the underlying properties the default value is returned.
      *
      * @param key the property key
      * @param defaultValue the default value
@@ -152,22 +159,26 @@ public class DatabaseProperties {
     }
 
     /**
-     * Returns a map of the meta data from the database properties. This primarily contains timestamps of when the NVD CVE
-     * information was last updated.
+     * Returns a map of the meta data from the database properties. This
+     * primarily contains timestamps of when the NVD CVE information was last
+     * updated.
      *
      * @return a map of the database meta data
      */
     public Map<String, String> getMetaData() {
-        final Map<String, String> map = new TreeMap<String, String>();
+        final Map<String, String> map = new TreeMap<>();
         for (Entry<Object, Object> entry : properties.entrySet()) {
             final String key = (String) entry.getKey();
             if (!"version".equals(key)) {
                 if (key.startsWith("NVD CVE ")) {
                     try {
                         final long epoch = Long.parseLong((String) entry.getValue());
-                        final Date date = new Date(epoch);
-                        final DateFormat format = new SimpleDateFormat("dd/MM/yyyy HH:mm:ss");
-                        final String formatted = format.format(date);
+                        final DateTime date = new DateTime(epoch);
+                        final DateTimeFormatter format = DateTimeFormat.forPattern("dd/MM/yyyy HH:mm:ss");
+                        final String formatted = format.print(date);
+//                        final Date date = new Date(epoch);
+//                        final DateFormat format = new SimpleDateFormat("dd/MM/yyyy HH:mm:ss");
+//                        final String formatted = format.format(date);
                         map.put(key, formatted);
                     } catch (Throwable ex) { //deliberately being broad in this catch clause
                         LOGGER.debug("Unable to parse timestamp from DB", ex);

@@ -18,8 +18,6 @@
 package org.owasp.dependencycheck;
 
 import java.io.IOException;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
@@ -59,24 +57,22 @@ public class EngineIntegrationTest extends BaseDBTestCase {
         try {
             instance.analyzeDependencies();
         } catch (ExceptionCollection ex) {
-            if (ex.getExceptions().size()==1 &&
-                    (ex.getExceptions().get(0).getMessage().contains("bundle-audit") ||
-                    ex.getExceptions().get(0).getMessage().contains("AssemblyAnalyzer"))) {
+            if (ex.getExceptions().size() == 1
+                    && (ex.getExceptions().get(0).getMessage().contains("bundle-audit")
+                    || ex.getExceptions().get(0).getMessage().contains("AssemblyAnalyzer"))) {
                 //this is fine to ignore
-            } else if (ex.getExceptions().size()==2 &&
-                    ((ex.getExceptions().get(0).getMessage().contains("bundle-audit") &&
-                    ex.getExceptions().get(1).getMessage().contains("AssemblyAnalyzer")) ||
-                    (ex.getExceptions().get(1).getMessage().contains("bundle-audit") &&
-                    ex.getExceptions().get(0).getMessage().contains("AssemblyAnalyzer")))) {
+            } else if (ex.getExceptions().size() == 2
+                    && ((ex.getExceptions().get(0).getMessage().contains("bundle-audit")
+                    && ex.getExceptions().get(1).getMessage().contains("AssemblyAnalyzer"))
+                    || (ex.getExceptions().get(1).getMessage().contains("bundle-audit")
+                    && ex.getExceptions().get(0).getMessage().contains("AssemblyAnalyzer")))) {
                 //this is fine to ignore
             } else {
                 throw ex;
             }
         }
-        CveDB cveDB = new CveDB();
-        cveDB.open();
+        CveDB cveDB = CveDB.getInstance();
         DatabaseProperties dbProp = cveDB.getDatabaseProperties();
-        cveDB.close();
         ReportGenerator rg = new ReportGenerator("DependencyCheck", instance.getDependencies(), instance.getAnalyzers(), dbProp);
         rg.generateReports("./target/", "ALL");
         instance.cleanup();

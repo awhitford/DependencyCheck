@@ -37,7 +37,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Checks the gh-pages dependency-check site to determine the current released
- * version number. If the released version number is greater then the running
+ * version number. If the released version number is greater than the running
  * version number a warning is printed recommending that an upgrade be
  * performed.
  *
@@ -57,11 +57,6 @@ public class EngineVersionCheck implements CachedWebDataSource {
      * The property key indicating when the last version check occurred.
      */
     public static final String CURRENT_ENGINE_RELEASE = "CurrentEngineRelease";
-    /**
-     * Reference to the Cve Database.
-     */
-    private CveDB cveDB = null;
-
     /**
      * The version retrieved from the database properties or web to check
      * against.
@@ -99,10 +94,18 @@ public class EngineVersionCheck implements CachedWebDataSource {
     @Override
     public void update() throws UpdateException {
         try {
-            if (Settings.getBoolean(Settings.KEYS.AUTO_UPDATE)) {
-                openDatabase();
+            final boolean autoupdate = Settings.getBoolean(Settings.KEYS.AUTO_UPDATE, true);
+            final boolean enabled = Settings.getBoolean(Settings.KEYS.UPDATE_VERSION_CHECK_ENABLED, true);
+            final String original = Settings.getString(Settings.KEYS.CVE_ORIGINAL_MODIFIED_20_URL);
+            final String current = Settings.getString(Settings.KEYS.CVE_MODIFIED_20_URL);
+            /*
+             * Only update if auto-update is enabled, the engine check is
+             * enabled, and the NVD CVE URLs have not been modified (i.e. the
+             * user has not configured them to point to an internal source).
+             */
+            if (enabled && autoupdate && original != null && original.equals(current)) {
                 LOGGER.debug("Begin Engine Version Check");
-                final DatabaseProperties properties = cveDB.getDatabaseProperties();
+                final DatabaseProperties properties = CveDB.getInstance().getDatabaseProperties();
                 final long lastChecked = Long.parseLong(properties.getProperty(ENGINE_VERSION_CHECKED_ON, "0"));
                 final long now = System.currentTimeMillis();
                 updateToVersion = properties.getProperty(CURRENT_ENGINE_RELEASE, "");
@@ -121,8 +124,6 @@ public class EngineVersionCheck implements CachedWebDataSource {
             throw new UpdateException("Error occurred updating database properties.");
         } catch (InvalidSettingException ex) {
             LOGGER.debug("Unable to determine if autoupdate is enabled", ex);
-        } finally {
-            closeDatabase();
         }
     }
 
@@ -170,33 +171,6 @@ public class EngineVersionCheck implements CachedWebDataSource {
         }
         LOGGER.debug("Upgrade not needed");
         return false;
-    }
-
-    /**
-     * Opens the CVE and CPE data stores.
-     *
-     * @throws DatabaseException thrown if a data store cannot be opened
-     */
-    protected final void openDatabase() throws DatabaseException {
-        if (cveDB != null) {
-            return;
-        }
-        cveDB = new CveDB();
-        cveDB.open();
-    }
-
-    /**
-     * Closes the CVE and CPE data stores.
-     */
-    protected void closeDatabase() {
-        if (cveDB != null) {
-            try {
-                cveDB.close();
-                cveDB = null;
-            } catch (Throwable ignore) {
-                LOGGER.trace("Error closing the cveDB", ignore);
-            }
-        }
     }
 
     /**

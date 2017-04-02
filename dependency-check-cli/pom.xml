@@ -20,7 +20,7 @@ Copyright (c) 2012 - Jeremy Long. All Rights Reserved.
     <parent>
         <groupId>org.owasp</groupId>
         <artifactId>dependency-check-parent</artifactId>
-        <version>1.4.4</version>
+        <version>1.4.6-SNAPSHOT</version>
     </parent>
 
     <artifactId>dependency-check-cli</artifactId>
@@ -140,6 +140,8 @@ Copyright (c) 2012 - Jeremy Long. All Rights Reserved.
                     <binFileExtensions>
                         <unix>.sh</unix>
                     </binFileExtensions>
+                    <configurationDirectory>plugins/*</configurationDirectory>
+                    <includeConfigurationDirectoryInClasspath>true</includeConfigurationDirectoryInClasspath>
                 </configuration>
                 <executions>
                     <execution>
@@ -194,7 +196,7 @@ Copyright (c) 2012 - Jeremy Long. All Rights Reserved.
                 <version>${reporting.pmd-plugin.version}</version>
                 <configuration>
                     <targetJdk>1.6</targetJdk>
-                    <linkXref>true</linkXref>
+                    <linkXRef>true</linkXRef>
                     <sourceEncoding>utf-8</sourceEncoding>
                     <excludes>
                         <exclude>**/generated/*.java</exclude>

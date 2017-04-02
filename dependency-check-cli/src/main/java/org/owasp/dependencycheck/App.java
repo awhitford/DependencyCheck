@@ -205,6 +205,7 @@ public class App {
      * @param excludes the patterns for files/directories to exclude
      * @param symLinkDepth the depth that symbolic links will be followed
      * @param cvssFailScore the score to fail on if a vulnerability is found
+     * @return the exit code if there was an error
      *
      * @throws InvalidScanPathException thrown if the path to scan starts with
      * "//"
@@ -216,18 +217,19 @@ public class App {
      * collection.
      */
     private int runScan(String reportDirectory, String outputFormat, String applicationName, String[] files,
-            String[] excludes, int symLinkDepth, int cvssFailScore) throws InvalidScanPathException, DatabaseException, ExceptionCollection, ReportException {
+            String[] excludes, int symLinkDepth, int cvssFailScore) throws InvalidScanPathException, DatabaseException,
+            ExceptionCollection, ReportException {
         Engine engine = null;
         int retCode = 0;
         try {
             engine = new Engine();
-            final List<String> antStylePaths = new ArrayList<String>();
+            final List<String> antStylePaths = new ArrayList<>();
             for (String file : files) {
                 final String antPath = ensureCanonicalPath(file);
                 antStylePaths.add(antPath);
             }
 
-            final Set<File> paths = new HashSet<File>();
+            final Set<File> paths = new HashSet<>();
             for (String file : antStylePaths) {
                 LOGGER.debug("Scanning {}", file);
                 final DirectoryScanner scanner = new DirectoryScanner();
@@ -280,17 +282,8 @@ public class App {
                 exCol = ex;
             }
             final List<Dependency> dependencies = engine.getDependencies();
-            DatabaseProperties prop = null;
-            CveDB cve = null;
-            try {
-                cve = new CveDB();
-                cve.open();
-                prop = cve.getDatabaseProperties();
-            } finally {
-                if (cve != null) {
-                    cve.close();
-                }
-            }
+            final CveDB cve = CveDB.getInstance();
+            final DatabaseProperties prop = cve.getDatabaseProperties();
             final ReportGenerator report = new ReportGenerator(applicationName, dependencies, engine.getAnalyzers(), prop);
             try {
                 report.generateReports(reportDirectory, outputFormat);
@@ -308,11 +301,12 @@ public class App {
 
             //Set the exit code based on whether we found a high enough vulnerability
             for (Dependency dep : dependencies) {
-                if (dep.getVulnerabilities().size() != 0) {
+                if (!dep.getVulnerabilities().isEmpty()) {
                     for (Vulnerability vuln : dep.getVulnerabilities()) {
                         LOGGER.debug("VULNERABILITY FOUND " + dep.getDisplayFileName());
-                        if (vuln.getCvssScore() > cvssFailScore)
+                        if (vuln.getCvssScore() > cvssFailScore) {
                             retCode = 1;
+                        }
                     }
                 }
             }
@@ -428,6 +422,8 @@ public class App {
         Settings.setBoolean(Settings.KEYS.ANALYZER_OPENSSL_ENABLED, !cli.isOpenSSLDisabled());
         Settings.setBoolean(Settings.KEYS.ANALYZER_COMPOSER_LOCK_ENABLED, !cli.isComposerDisabled());
         Settings.setBoolean(Settings.KEYS.ANALYZER_NODE_PACKAGE_ENABLED, !cli.isNodeJsDisabled());
+        Settings.setBoolean(Settings.KEYS.ANALYZER_SWIFT_PACKAGE_MANAGER_ENABLED, !cli.isSwiftPackageAnalyzerDisabled());
+        Settings.setBoolean(Settings.KEYS.ANALYZER_COCOAPODS_ENABLED, !cli.isCocoapodsAnalyzerDisabled());
         Settings.setBoolean(Settings.KEYS.ANALYZER_RUBY_GEMSPEC_ENABLED, !cli.isRubyGemspecDisabled());
         Settings.setBoolean(Settings.KEYS.ANALYZER_CENTRAL_ENABLED, !cli.isCentralDisabled());
         Settings.setBoolean(Settings.KEYS.ANALYZER_NEXUS_ENABLED, !cli.isNexusDisabled());
@@ -463,7 +459,7 @@ public class App {
         encoder.setPattern("%d %C:%L%n%-5level - %msg%n");
         encoder.setContext(context);
         encoder.start();
-        final FileAppender<ILoggingEvent> fa = new FileAppender<ILoggingEvent>();
+        final FileAppender<ILoggingEvent> fa = new FileAppender<>();
         fa.setAppend(true);
         fa.setEncoder(encoder);
         fa.setContext(context);

@@ -50,6 +50,7 @@ import org.owasp.dependencycheck.dependency.VulnerableSoftware;
 import org.owasp.dependencycheck.exception.InitializationException;
 import org.owasp.dependencycheck.utils.DependencyVersion;
 import org.owasp.dependencycheck.utils.DependencyVersionUtil;
+import org.owasp.dependencycheck.utils.Settings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -69,26 +70,26 @@ public class CPEAnalyzer extends AbstractAnalyzer {
     /**
      * The maximum number of query results to return.
      */
-    static final int MAX_QUERY_RESULTS = 25;
+    private static final int MAX_QUERY_RESULTS = 25;
     /**
      * The weighting boost to give terms when constructing the Lucene query.
      */
-    static final String WEIGHTING_BOOST = "^5";
+    private static final String WEIGHTING_BOOST = "^5";
     /**
      * A string representation of a regular expression defining characters
      * utilized within the CPE Names.
      */
-    static final String CLEANSE_CHARACTER_RX = "[^A-Za-z0-9 ._-]";
+    private static final String CLEANSE_CHARACTER_RX = "[^A-Za-z0-9 ._-]";
     /**
      * A string representation of a regular expression used to remove all but
      * alpha characters.
      */
-    static final String CLEANSE_NONALPHA_RX = "[^A-Za-z]*";
+    private static final String CLEANSE_NONALPHA_RX = "[^A-Za-z]*";
     /**
      * The additional size to add to a new StringBuilder to account for extra
      * data that will be written into the string.
      */
-    static final int STRING_BUILDER_BUFFER = 20;
+    private static final int STRING_BUILDER_BUFFER = 20;
     /**
      * The CPE in memory index.
      */
@@ -124,13 +125,23 @@ public class CPEAnalyzer extends AbstractAnalyzer {
     }
 
     /**
+     * The default is to support parallel processing.
+     *
+     * @return false
+     */
+    @Override
+    public boolean supportsParallelProcessing() {
+        return false;
+    }
+
+    /**
      * Creates the CPE Lucene Index.
      *
      * @throws InitializationException is thrown if there is an issue opening
      * the index.
      */
     @Override
-    public void initialize() throws InitializationException {
+    public void initializeAnalyzer() throws InitializationException {
         try {
             this.open();
         } catch (IOException ex) {
@@ -152,8 +163,7 @@ public class CPEAnalyzer extends AbstractAnalyzer {
      */
     public void open() throws IOException, DatabaseException {
         if (!isOpen()) {
-            cve = new CveDB();
-            cve.open();
+            cve = CveDB.getInstance();
             cpe = CpeMemoryIndex.getInstance();
             try {
                 final long creationStart = System.currentTimeMillis();
@@ -171,17 +181,18 @@ public class CPEAnalyzer extends AbstractAnalyzer {
      * Closes the data sources.
      */
     @Override
-    public void close() {
+    public void closeAnalyzer() {
         if (cpe != null) {
             cpe.close();
             cpe = null;
         }
-        if (cve != null) {
-            cve.close();
-            cve = null;
-        }
     }
 
+    /**
+     * Returns whether or not the analyzer is open.
+     *
+     * @return <code>true</code> if the analyzer is open
+     */
     public boolean isOpen() {
         return cpe != null && cpe.isOpen();
     }
@@ -197,7 +208,7 @@ public class CPEAnalyzer extends AbstractAnalyzer {
      * @throws ParseException is thrown when the Lucene query cannot be parsed.
      */
     protected void determineCPE(Dependency dependency) throws CorruptIndexException, IOException, ParseException {
-        //TODO test dojo-war against this. we shold get dojo-toolkit:dojo-toolkit AND dojo-toolkit:toolkit
+        //TODO test dojo-war against this. we should get dojo-toolkit:dojo-toolkit AND dojo-toolkit:toolkit
         String vendors = "";
         String products = "";
         for (Confidence confidence : Confidence.values()) {
@@ -285,7 +296,7 @@ public class CPEAnalyzer extends AbstractAnalyzer {
     protected List<IndexEntry> searchCPE(String vendor, String product,
             Set<String> vendorWeightings, Set<String> productWeightings) {
 
-        final List<IndexEntry> ret = new ArrayList<IndexEntry>(MAX_QUERY_RESULTS);
+        final List<IndexEntry> ret = new ArrayList<>(MAX_QUERY_RESULTS);
 
         final String searchString = buildSearch(vendor, product, vendorWeightings, productWeightings);
         if (searchString == null) {
@@ -471,7 +482,7 @@ public class CPEAnalyzer extends AbstractAnalyzer {
             return false;
         }
         final String[] words = text.split("[\\s_-]");
-        final List<String> list = new ArrayList<String>();
+        final List<String> list = new ArrayList<>();
         String tempWord = null;
         for (String word : words) {
             /*
@@ -515,7 +526,7 @@ public class CPEAnalyzer extends AbstractAnalyzer {
      * dependency.
      */
     @Override
-    public synchronized void analyze(Dependency dependency, Engine engine) throws AnalysisException {
+    protected synchronized void analyzeDependency(Dependency dependency, Engine engine) throws AnalysisException {
         try {
             determineCPE(dependency);
         } catch (CorruptIndexException ex) {
@@ -549,7 +560,7 @@ public class CPEAnalyzer extends AbstractAnalyzer {
         DependencyVersion bestGuess = new DependencyVersion("-");
         Confidence bestGuessConf = null;
         boolean hasBroadMatch = false;
-        final List<IdentifierMatch> collected = new ArrayList<IdentifierMatch>();
+        final List<IdentifierMatch> collected = new ArrayList<>();
 
         //TODO the following algorithm incorrectly identifies things as a lower version
         // if there lower confidence evidence when the current (highest) version number
@@ -588,11 +599,10 @@ public class CPEAnalyzer extends AbstractAnalyzer {
                         }
                     }
                 }
-                if (bestGuessConf == null || bestGuessConf.compareTo(conf) > 0) {
-                    if (bestGuess.getVersionParts().size() < evVer.getVersionParts().size()) {
-                        bestGuess = evVer;
-                        bestGuessConf = conf;
-                    }
+                if ((bestGuessConf == null || bestGuessConf.compareTo(conf) > 0)
+                        && bestGuess.getVersionParts().size() < evVer.getVersionParts().size()) {
+                    bestGuess = evVer;
+                    bestGuessConf = conf;
                 }
             }
         }
@@ -602,10 +612,12 @@ public class CPEAnalyzer extends AbstractAnalyzer {
             final String cpeUrlName = String.format("cpe:/a:%s:%s", vendor, product);
             url = String.format(NVD_SEARCH_URL, URLEncoder.encode(cpeUrlName, "UTF-8"));
         }
-        if (bestGuessConf == null) {
+        if (bestGuessConf
+                == null) {
             bestGuessConf = Confidence.LOW;
         }
         final IdentifierMatch match = new IdentifierMatch("cpe", cpeName, url, IdentifierConfidence.BEST_GUESS, bestGuessConf);
+
         collected.add(match);
 
         Collections.sort(collected);
@@ -626,6 +638,18 @@ public class CPEAnalyzer extends AbstractAnalyzer {
             }
         }
         return identifierAdded;
+    }
+
+    /**
+     * <p>
+     * Returns the setting key to determine if the analyzer is enabled.</p>
+     *
+     * @return the key for the analyzer's enabled property
+     */
+    @Override
+    protected String getAnalyzerEnabledSettingKey() {
+        return Settings.KEYS.ANALYZER_CPE_ENABLED;
+
     }
 
     /**
@@ -656,6 +680,19 @@ public class CPEAnalyzer extends AbstractAnalyzer {
     private static class IdentifierMatch implements Comparable<IdentifierMatch> {
 
         /**
+         * The confidence in the evidence used to identify this match.
+         */
+        private Confidence evidenceConfidence;
+        /**
+         * The confidence whether this is an exact match, or a best guess.
+         */
+        private IdentifierConfidence confidence;
+        /**
+         * The CPE identifier.
+         */
+        private Identifier identifier;
+
+        /**
          * Constructs an IdentifierMatch.
          *
          * @param type the type of identifier (such as CPE)
@@ -671,12 +708,8 @@ public class CPEAnalyzer extends AbstractAnalyzer {
             this.confidence = identifierConfidence;
             this.evidenceConfidence = evidenceConfidence;
         }
-        //<editor-fold defaultstate="collapsed" desc="Property implementations: evidenceConfidence, confidence, identifier">
-        /**
-         * The confidence in the evidence used to identify this match.
-         */
-        private Confidence evidenceConfidence;
 
+        //<editor-fold defaultstate="collapsed" desc="Property implementations: evidenceConfidence, confidence, identifier">
         /**
          * Get the value of evidenceConfidence
          *
@@ -694,10 +727,6 @@ public class CPEAnalyzer extends AbstractAnalyzer {
         public void setEvidenceConfidence(Confidence evidenceConfidence) {
             this.evidenceConfidence = evidenceConfidence;
         }
-        /**
-         * The confidence whether this is an exact match, or a best guess.
-         */
-        private IdentifierConfidence confidence;
 
         /**
          * Get the value of confidence.
@@ -716,10 +745,6 @@ public class CPEAnalyzer extends AbstractAnalyzer {
         public void setConfidence(IdentifierConfidence confidence) {
             this.confidence = confidence;
         }
-        /**
-         * The CPE identifier.
-         */
-        private Identifier identifier;
 
         /**
          * Get the value of identifier.
@@ -787,10 +812,7 @@ public class CPEAnalyzer extends AbstractAnalyzer {
             if (this.confidence != other.confidence) {
                 return false;
             }
-            if (this.identifier != other.identifier && (this.identifier == null || !this.identifier.equals(other.identifier))) {
-                return false;
-            }
-            return true;
+            return !(this.identifier != other.identifier && (this.identifier == null || !this.identifier.equals(other.identifier)));
         }
         //</editor-fold>
 
@@ -808,16 +830,6 @@ public class CPEAnalyzer extends AbstractAnalyzer {
                     .append(evidenceConfidence, o.evidenceConfidence)
                     .append(identifier, o.identifier)
                     .toComparison();
-            /*
-            int conf = this.confidence.compareTo(o.confidence);
-            if (conf == 0) {
-                conf = this.evidenceConfidence.compareTo(o.evidenceConfidence);
-                if (conf == 0) {
-                    conf = identifier.compareTo(o.identifier);
-                }
-            }
-            return conf;
-             */
         }
     }
 }

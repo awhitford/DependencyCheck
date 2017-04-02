@@ -53,17 +53,15 @@ public class CMakeAnalyzerTest extends BaseDBTestCase {
     /**
      * The package analyzer to test.
      */
-    CMakeAnalyzer analyzer;
+    private CMakeAnalyzer analyzer;
 
     /**
      * Setup the CmakeAnalyzer.
      *
      * @throws Exception if there is a problem
      */
-    @Override
     @Before
     public void setUp() throws Exception {
-        super.setUp();
         analyzer = new CMakeAnalyzer();
         analyzer.setFilesMatched(true);
         analyzer.initialize();

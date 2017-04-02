@@ -35,6 +35,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import org.junit.Assume;
 import org.junit.Test;
+import org.owasp.dependencycheck.Engine;
 import org.owasp.dependencycheck.data.nvdcve.DatabaseException;
 import org.owasp.dependencycheck.utils.InvalidSettingException;
 import org.owasp.dependencycheck.utils.Settings;
@@ -69,7 +70,7 @@ public class BaseDependencyCheckMojoTest extends BaseTest {
             MavenProject project = new MockUp<MavenProject>() {
                 @Mock
                 public Set<Artifact> getArtifacts() {
-                    Set<Artifact> artifacts = new HashSet<Artifact>();
+                    Set<Artifact> artifacts = new HashSet<>();
                     Artifact a = new ArtifactStub();
                     try {
                         File file = new File(Test.class.getProtectionDomain().getCodeSource().getLocation().toURI());
@@ -91,7 +92,7 @@ public class BaseDependencyCheckMojoTest extends BaseTest {
 
             boolean autoUpdate = Settings.getBoolean(Settings.KEYS.AUTO_UPDATE);
             Settings.setBoolean(Settings.KEYS.AUTO_UPDATE, false);
-            MavenEngine engine = new MavenEngine(null, null);
+            Engine engine = new Engine();
             Settings.setBoolean(Settings.KEYS.AUTO_UPDATE, autoUpdate);
 
             assertTrue(engine.getDependencies().isEmpty());
@@ -106,6 +107,9 @@ public class BaseDependencyCheckMojoTest extends BaseTest {
         }
     }
 
+    /**
+     * Implementation of ODC Mojo for testing.
+     */
     public class BaseDependencyCheckMojoImpl extends BaseDependencyCheckMojo {
 
         @Override

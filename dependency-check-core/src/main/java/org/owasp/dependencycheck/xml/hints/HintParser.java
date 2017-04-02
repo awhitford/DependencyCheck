@@ -26,7 +26,7 @@ import java.io.InputStreamReader;
 import java.io.Reader;
 import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.parsers.SAXParser;
-import javax.xml.parsers.SAXParserFactory;
+import org.owasp.dependencycheck.utils.XmlUtils;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -64,7 +64,12 @@ public class HintParser {
     /**
      * The schema for the hint XML files.
      */
-    private static final String HINT_SCHEMA = "schema/dependency-hint.1.1.xsd";
+    private static final String HINT_SCHEMA = "schema/dependency-hint.1.2.xsd";
+
+    /**
+     * The schema for the hint XML files.
+     */
+    private static final String HINT_SCHEMA_OLD = "schema/dependency-hint.1.1.xsd";
 
     /**
      * Parses the given XML file and returns a list of the hints contained.
@@ -74,22 +79,19 @@ public class HintParser {
      * @throws HintParseException thrown if the XML file cannot be parsed
      */
     public Hints parseHints(File file) throws HintParseException {
-        FileInputStream fis = null;
+        //TODO there must be a better way to determine which schema to use for validation.
         try {
-            fis = new FileInputStream(file);
-            return parseHints(fis);
-        } catch (IOException ex) {
-            LOGGER.debug("", ex);
-            throw new HintParseException(ex);
+            try (FileInputStream fis = new FileInputStream(file)) {
+                return parseHints(fis);
+            } catch (IOException ex) {
+                LOGGER.debug("", ex);
+                throw new HintParseException(ex);
+            }
         } catch (SAXException ex) {
-            throw new HintParseException(ex);
-        } finally {
-            if (fis != null) {
-                try {
-                    fis.close();
-                } catch (IOException ex) {
-                    LOGGER.debug("Unable to close stream", ex);
-                }
+            try (FileInputStream fis = new FileInputStream(file)) {
+                return parseHints(fis, HINT_SCHEMA_OLD);
+            } catch (SAXException | IOException ex1) {
+                throw new HintParseException(ex);
             }
         }
     }
@@ -104,30 +106,35 @@ public class HintParser {
      * @throws SAXException thrown if the XML cannot be parsed
      */
     public Hints parseHints(InputStream inputStream) throws HintParseException, SAXException {
-        InputStream schemaStream = null;
-        try {
-            schemaStream = this.getClass().getClassLoader().getResourceAsStream(HINT_SCHEMA);
+        return parseHints(inputStream, HINT_SCHEMA);
+    }
+
+    /**
+     * Parses the given XML stream and returns a list of the hint rules
+     * contained.
+     *
+     * @param inputStream an InputStream containing hint rules
+     * @param schema the XSD to use to validate the XML against
+     * @return a list of hint rules
+     * @throws HintParseException thrown if the XML cannot be parsed
+     * @throws SAXException thrown if the XML cannot be parsed
+     */
+    private Hints parseHints(InputStream inputStream, String schema) throws HintParseException, SAXException {
+        try (InputStream schemaStream = this.getClass().getClassLoader().getResourceAsStream(schema)) {
             final HintHandler handler = new HintHandler();
-            final SAXParserFactory factory = SAXParserFactory.newInstance();
-            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-            factory.setNamespaceAware(true);
-            factory.setValidating(true);
-            final SAXParser saxParser = factory.newSAXParser();
-            saxParser.setProperty(HintParser.JAXP_SCHEMA_LANGUAGE, HintParser.W3C_XML_SCHEMA);
-            saxParser.setProperty(HintParser.JAXP_SCHEMA_SOURCE, new InputSource(schemaStream));
+            final SAXParser saxParser = XmlUtils.buildSecureSaxParser(schemaStream);
             final XMLReader xmlReader = saxParser.getXMLReader();
             xmlReader.setErrorHandler(new HintErrorHandler());
             xmlReader.setContentHandler(handler);
-
-            final Reader reader = new InputStreamReader(inputStream, "UTF-8");
-            final InputSource in = new InputSource(reader);
-
-            xmlReader.parse(in);
-            final Hints hints = new Hints();
-            hints.setHintRules(handler.getHintRules());
-            hints.setVendorDuplicatingHintRules(handler.getVendorDuplicatingHintRules());
-            return hints;
-        } catch (ParserConfigurationException ex) {
+            try (Reader reader = new InputStreamReader(inputStream, "UTF-8")) {
+                final InputSource in = new InputSource(reader);
+                xmlReader.parse(in);
+                final Hints hints = new Hints();
+                hints.setHintRules(handler.getHintRules());
+                hints.setVendorDuplicatingHintRules(handler.getVendorDuplicatingHintRules());
+                return hints;
+            }
+        } catch (ParserConfigurationException | FileNotFoundException ex) {
             LOGGER.debug("", ex);
             throw new HintParseException(ex);
         } catch (SAXException ex) {
@@ -137,20 +144,9 @@ public class HintParser {
                 LOGGER.debug("", ex);
                 throw new HintParseException(ex);
             }
-        } catch (FileNotFoundException ex) {
-            LOGGER.debug("", ex);
-            throw new HintParseException(ex);
         } catch (IOException ex) {
             LOGGER.debug("", ex);
             throw new HintParseException(ex);
-        } finally {
-            if (schemaStream != null) {
-                try {
-                    schemaStream.close();
-                } catch (IOException ex) {
-                    LOGGER.debug("Error closing hint file stream", ex);
-                }
-            }
         }
     }
 }

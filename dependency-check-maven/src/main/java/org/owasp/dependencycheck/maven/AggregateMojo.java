@@ -30,6 +30,7 @@ import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
 import org.apache.maven.project.MavenProject;
+import org.owasp.dependencycheck.Engine;
 import org.owasp.dependencycheck.data.nvdcve.DatabaseException;
 import org.owasp.dependencycheck.exception.ExceptionCollection;
 import org.owasp.dependencycheck.exception.ReportException;
@@ -52,17 +53,24 @@ import org.owasp.dependencycheck.utils.Settings;
 public class AggregateMojo extends BaseDependencyCheckMojo {
 
     /**
+     * The name of the report in the site.
+     */
+    @SuppressWarnings("CanBeFinal")
+    @Parameter(property = "name", defaultValue = "dependency-check:aggregate", required = true)
+    private String name = "dependency-check:aggregate";
+
+    /**
      * Executes the aggregate dependency-check goal. This runs dependency-check
      * and generates the subsequent reports.
      *
      * @throws MojoExecutionException thrown if there is ane exception running
-     * the mojo
+     * the Mojo
      * @throws MojoFailureException thrown if dependency-check is configured to
      * fail the build
      */
     @Override
     public void runCheck() throws MojoExecutionException, MojoFailureException {
-        final MavenEngine engine = loadEngine();
+        final Engine engine = loadEngine();
         if (engine == null) {
             return;
         }
@@ -110,7 +118,7 @@ public class AggregateMojo extends BaseDependencyCheckMojo {
         }
         File outputDir = getCorrectOutputDirectory(this.getProject());
         if (outputDir == null) {
-            //in some regards we shouldn't be writting this, but we are anyway.
+            //in some regards we shouldn't be writing this, but we are anyway.
             //we shouldn't write this because nothing is configured to generate this report.
             outputDir = new File(this.getProject().getBuild().getDirectory());
         }
@@ -145,8 +153,8 @@ public class AggregateMojo extends BaseDependencyCheckMojo {
         if (project == null) {
             return Collections.emptySet();
         }
-        final Set<MavenProject> descendants = new HashSet<MavenProject>();
-        int size = 0;
+        final Set<MavenProject> descendants = new HashSet<>();
+        int size;
         if (getLog().isDebugEnabled()) {
             getLog().debug(String.format("Collecting descendants of %s", project.getName()));
         }
@@ -157,7 +165,7 @@ public class AggregateMojo extends BaseDependencyCheckMojo {
                     mpp = mpp.getCanonicalFile();
                     if (mpp.compareTo(mod.getBasedir()) == 0 && descendants.add(mod)
                             && getLog().isDebugEnabled()) {
-                        getLog().debug(String.format("Decendent module %s added", mod.getName()));
+                        getLog().debug(String.format("Descendant module %s added", mod.getName()));
 
                     }
                 } catch (IOException ex) {
@@ -172,18 +180,18 @@ public class AggregateMojo extends BaseDependencyCheckMojo {
             for (MavenProject p : getReactorProjects()) {
                 if (project.equals(p.getParent()) || descendants.contains(p.getParent())) {
                     if (descendants.add(p) && getLog().isDebugEnabled()) {
-                        getLog().debug(String.format("Decendent %s added", p.getName()));
+                        getLog().debug(String.format("Descendant %s added", p.getName()));
 
                     }
                     for (MavenProject modTest : getReactorProjects()) {
                         if (p.getModules() != null && p.getModules().contains(modTest.getName())
                                 && descendants.add(modTest)
                                 && getLog().isDebugEnabled()) {
-                            getLog().debug(String.format("Decendent %s added", modTest.getName()));
+                            getLog().debug(String.format("Descendant %s added", modTest.getName()));
                         }
                     }
                 }
-                final Set<MavenProject> addedDescendants = new HashSet<MavenProject>();
+                final Set<MavenProject> addedDescendants = new HashSet<>();
                 for (MavenProject dec : descendants) {
                     for (String mod : dec.getModules()) {
                         try {
@@ -201,7 +209,7 @@ public class AggregateMojo extends BaseDependencyCheckMojo {
                 }
                 for (MavenProject addedDescendant : addedDescendants) {
                     if (descendants.add(addedDescendant) && getLog().isDebugEnabled()) {
-                        getLog().debug(String.format("Decendent module %s added", addedDescendant.getName()));
+                        getLog().debug(String.format("Descendant module %s added", addedDescendant.getName()));
                     }
                 }
             }
@@ -226,14 +234,14 @@ public class AggregateMojo extends BaseDependencyCheckMojo {
     /**
      * Initializes the engine.
      *
-     * @return the MavenEngine used to execute dependency-check
+     * @return the Engine used to execute dependency-check
      * @throws MojoExecutionException thrown if there is an exception running
      * the Mojo
      * @throws MojoFailureException thrown if dependency-check is configured to
      * fail the build if severe CVEs are identified.
      */
-    protected MavenEngine loadEngine() throws MojoExecutionException, MojoFailureException {
-        MavenEngine engine = null;
+    protected Engine loadEngine() throws MojoExecutionException, MojoFailureException {
+        Engine engine = null;
         try {
             engine = initializeEngine();
         } catch (DatabaseException ex) {
@@ -251,15 +259,8 @@ public class AggregateMojo extends BaseDependencyCheckMojo {
 
     @Override
     public boolean canGenerateReport() {
-        return true; //aggregate always returns true for now - we can look at a more complicated/acurate solution later
+        return true; //aggregate always returns true for now - we can look at a more complicated/accurate solution later
     }
-
-    /**
-     * The name of the report in the site.
-     */
-    @SuppressWarnings("CanBeFinal")
-    @Parameter(property = "name", defaultValue = "dependency-check:aggregate", required = true)
-    private String name = "dependency-check:aggregate";
 
     /**
      * Returns the report name.

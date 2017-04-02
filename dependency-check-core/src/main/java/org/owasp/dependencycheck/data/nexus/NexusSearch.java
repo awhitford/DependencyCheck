@@ -22,16 +22,17 @@ import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.xpath.XPath;
+import javax.xml.xpath.XPathExpressionException;
 import javax.xml.xpath.XPathFactory;
 
-import org.owasp.dependencycheck.utils.InvalidSettingException;
-import org.owasp.dependencycheck.utils.Settings;
 import org.owasp.dependencycheck.utils.URLConnectionFactory;
+import org.owasp.dependencycheck.utils.XmlUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.w3c.dom.Document;
+import org.xml.sax.SAXException;
 
 /**
  * Class of methods to search Nexus repositories.
@@ -104,9 +105,7 @@ public class NexusSearch {
         switch (conn.getResponseCode()) {
             case 200:
                 try {
-                    final DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-                    factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-                    final DocumentBuilder builder = factory.newDocumentBuilder();
+                    final DocumentBuilder builder = XmlUtils.buildSecureDocumentBuilder();
                     final Document doc = builder.parse(conn.getInputStream());
                     final XPath xpath = XPathFactory.newInstance().newXPath();
                     final String groupId = xpath
@@ -136,7 +135,7 @@ public class NexusSearch {
                         ma.setPomUrl(pomLink);
                     }
                     return ma;
-                } catch (Throwable e) {
+                } catch (ParserConfigurationException | IOException | SAXException | XPathExpressionException e) {
                     // Anything else is jacked-up XML stuff that we really can't recover
                     // from well
                     throw new IOException(e.getMessage(), e);
@@ -167,13 +166,14 @@ public class NexusSearch {
                 LOGGER.warn("Expected 200 result from Nexus, got {}", conn.getResponseCode());
                 return false;
             }
-            final DocumentBuilder builder = DocumentBuilderFactory.newInstance().newDocumentBuilder();
+            final DocumentBuilder builder = XmlUtils.buildSecureDocumentBuilder();
+
             final Document doc = builder.parse(conn.getInputStream());
             if (!"status".equals(doc.getDocumentElement().getNodeName())) {
                 LOGGER.warn("Expected root node name of status, got {}", doc.getDocumentElement().getNodeName());
                 return false;
             }
-        } catch (Throwable e) {
+        } catch (IOException | ParserConfigurationException | SAXException e) {
             return false;
         }
 

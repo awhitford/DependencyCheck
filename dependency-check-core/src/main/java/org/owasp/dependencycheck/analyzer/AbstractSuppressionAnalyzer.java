@@ -67,8 +67,7 @@ public abstract class AbstractSuppressionAnalyzer extends AbstractAnalyzer {
      * @throws InitializationException thrown if there is an exception
      */
     @Override
-    public void initialize() throws InitializationException {
-        super.initialize();
+    public void initializeAnalyzer() throws InitializationException {
         try {
             loadSuppressionData();
         } catch (SuppressionParseException ex) {
@@ -108,7 +107,8 @@ public abstract class AbstractSuppressionAnalyzer extends AbstractAnalyzer {
         final SuppressionParser parser = new SuppressionParser();
         File file = null;
         try {
-            rules = parser.parseSuppressionRules(this.getClass().getClassLoader().getResourceAsStream("dependencycheck-base-suppression.xml"));
+            final InputStream in = this.getClass().getClassLoader().getResourceAsStream("dependencycheck-base-suppression.xml");
+            rules = parser.parseSuppressionRules(in);
         } catch (SAXException ex) {
             throw new SuppressionParseException("Unable to parse the base suppression data file", ex);
         }
@@ -130,10 +130,9 @@ public abstract class AbstractSuppressionAnalyzer extends AbstractAnalyzer {
                 }
             } else {
                 file = new File(suppressionFilePath);
-                InputStream suppressionsFromClasspath = null;
+
                 if (!file.exists()) {
-                    try {
-                        suppressionsFromClasspath = this.getClass().getClassLoader().getResourceAsStream(suppressionFilePath);
+                    try (InputStream suppressionsFromClasspath = this.getClass().getClassLoader().getResourceAsStream(suppressionFilePath)) {
                         if (suppressionsFromClasspath != null) {
                             deleteTempFile = true;
                             file = FileUtils.getTempFile("suppression", "xml");
@@ -141,14 +140,6 @@ public abstract class AbstractSuppressionAnalyzer extends AbstractAnalyzer {
                                 org.apache.commons.io.FileUtils.copyInputStreamToFile(suppressionsFromClasspath, file);
                             } catch (IOException ex) {
                                 throwSuppressionParseException("Unable to locate suppressions file in classpath", ex);
-                            }
-                        }
-                    } finally {
-                        if (suppressionsFromClasspath != null) {
-                            try {
-                                suppressionsFromClasspath.close();
-                            } catch (IOException ex) {
-                                LOGGER.debug("Failed to close stream", ex);
                             }
                         }
                     }

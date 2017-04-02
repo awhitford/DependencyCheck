@@ -30,6 +30,7 @@ import org.owasp.dependencycheck.dependency.Dependency;
 import org.owasp.dependencycheck.dependency.Identifier;
 import org.owasp.dependencycheck.utils.DependencyVersion;
 import org.owasp.dependencycheck.utils.DependencyVersionUtil;
+import org.owasp.dependencycheck.utils.Settings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -71,7 +72,7 @@ public class DependencyBundlingAnalyzer extends AbstractAnalyzer {
      * @return a flag indicating if this analyzer has run. This analyzer only
      * runs once
      */
-    protected boolean getAnalyzed() {
+    protected synchronized boolean getAnalyzed() {
         return analyzed;
     }
 
@@ -84,7 +85,7 @@ public class DependencyBundlingAnalyzer extends AbstractAnalyzer {
     /**
      * The phase that this analyzer is intended to run in.
      */
-    private static final AnalysisPhase ANALYSIS_PHASE = AnalysisPhase.PRE_FINDING_ANALYSIS;
+    private static final AnalysisPhase ANALYSIS_PHASE = AnalysisPhase.FINAL;
 
     /**
      * Returns the name of the analyzer.
@@ -120,6 +121,17 @@ public class DependencyBundlingAnalyzer extends AbstractAnalyzer {
     }
 
     /**
+     * <p>
+     * Returns the setting key to determine if the analyzer is enabled.</p>
+     *
+     * @return the key for the analyzer's enabled property
+     */
+    @Override
+    protected String getAnalyzerEnabledSettingKey() {
+        return Settings.KEYS.ANALYZER_DEPENDENCY_BUNDLING_ENABLED;
+    }
+
+    /**
      * Analyzes a set of dependencies. If they have been found to have the same
      * base path and the same set of identifiers they are likely related. The
      * related dependencies are bundled into a single reportable item.
@@ -130,10 +142,10 @@ public class DependencyBundlingAnalyzer extends AbstractAnalyzer {
      * file.
      */
     @Override
-    public void analyze(Dependency ignore, Engine engine) throws AnalysisException {
+    protected synchronized void analyzeDependency(Dependency ignore, Engine engine) throws AnalysisException {
         if (!analyzed) {
             analyzed = true;
-            final Set<Dependency> dependenciesToRemove = new HashSet<Dependency>();
+            final Set<Dependency> dependenciesToRemove = new HashSet<>();
             final ListIterator<Dependency> mainIterator = engine.getDependencies().listIterator();
             //for (Dependency nextDependency : engine.getDependencies()) {
             while (mainIterator.hasNext()) {
@@ -142,14 +154,15 @@ public class DependencyBundlingAnalyzer extends AbstractAnalyzer {
                     final ListIterator<Dependency> subIterator = engine.getDependencies().listIterator(mainIterator.nextIndex());
                     while (subIterator.hasNext()) {
                         final Dependency nextDependency = subIterator.next();
-                        Dependency main = null;
-                        if (hashesMatch(dependency, nextDependency) && !containedInWar(dependency.getFilePath())
-                                && !containedInWar(nextDependency.getFilePath())) {
-                            if (firstPathIsShortest(dependency.getFilePath(), nextDependency.getFilePath())) {
-                                mergeDependencies(dependency, nextDependency, dependenciesToRemove);
-                            } else {
-                                mergeDependencies(nextDependency, dependency, dependenciesToRemove);
-                                break; //since we merged into the next dependency - skip forward to the next in mainIterator
+                        if (hashesMatch(dependency, nextDependency)) {
+                            if (!containedInWar(dependency.getFilePath())
+                                    && !containedInWar(nextDependency.getFilePath())) {
+                                if (firstPathIsShortest(dependency.getFilePath(), nextDependency.getFilePath())) {
+                                    mergeDependencies(dependency, nextDependency, dependenciesToRemove);
+                                } else {
+                                    mergeDependencies(nextDependency, dependency, dependenciesToRemove);
+                                    break; //since we merged into the next dependency - skip forward to the next in mainIterator
+                                }
                             }
                         } else if (isShadedJar(dependency, nextDependency)) {
                             if (dependency.getFileName().toLowerCase().endsWith("pom.xml")) {
@@ -162,22 +175,9 @@ public class DependencyBundlingAnalyzer extends AbstractAnalyzer {
                             }
                         } else if (cpeIdentifiersMatch(dependency, nextDependency)
                                 && hasSameBasePath(dependency, nextDependency)
+                                && vulnCountMatches(dependency, nextDependency)
                                 && fileNameMatch(dependency, nextDependency)) {
                             if (isCore(dependency, nextDependency)) {
-                                mergeDependencies(dependency, nextDependency, dependenciesToRemove);
-                            } else {
-                                mergeDependencies(nextDependency, dependency, dependenciesToRemove);
-                                break; //since we merged into the next dependency - skip forward to the next in mainIterator
-                            }
-                        } else if ((main = getMainGemspecDependency(dependency, nextDependency)) != null) {
-                            if (main == dependency) {
-                                mergeDependencies(dependency, nextDependency, dependenciesToRemove);
-                            } else {
-                                mergeDependencies(nextDependency, dependency, dependenciesToRemove);
-                                break; //since we merged into the next dependency - skip forward to the next in mainIterator
-                            }
-                        } else if ((main = getMainSwiftDependency(dependency, nextDependency)) != null) {
-                            if (main == dependency) {
                                 mergeDependencies(dependency, nextDependency, dependenciesToRemove);
                             } else {
                                 mergeDependencies(nextDependency, dependency, dependenciesToRemove);
@@ -224,7 +224,12 @@ public class DependencyBundlingAnalyzer extends AbstractAnalyzer {
      * @return a string representing the base path.
      */
     private String getBaseRepoPath(final String path) {
-        int pos = path.indexOf("repository" + File.separator) + 11;
+        int pos;
+        if (path.contains("local-repo")) {
+            pos = path.indexOf("local-repo" + File.separator) + 11;
+        } else {
+            pos = path.indexOf("repository" + File.separator) + 11;
+        }
         if (pos < 0) {
             return path;
         }
@@ -318,6 +323,19 @@ public class DependencyBundlingAnalyzer extends AbstractAnalyzer {
     }
 
     /**
+     * Returns true if the two dependencies have the same vulnerability count.
+     *
+     * @param dependency1 a dependency2 to compare
+     * @param dependency2 a dependency2 to compare
+     * @return true if the two dependencies have the same vulnerability count
+     */
+    private boolean vulnCountMatches(Dependency dependency1, Dependency dependency2) {
+        return dependency1.getVulnerabilities() != null && dependency2.getVulnerabilities() != null
+                && dependency1.getVulnerabilities().size() == dependency2.getVulnerabilities().size();
+
+    }
+
+    /**
      * Determines if the two dependencies have the same base path.
      *
      * @param dependency1 a Dependency object
@@ -341,7 +359,7 @@ public class DependencyBundlingAnalyzer extends AbstractAnalyzer {
             return true;
         }
 
-        if (left.matches(".*[/\\\\]repository[/\\\\].*") && right.matches(".*[/\\\\]repository[/\\\\].*")) {
+        if (left.matches(".*[/\\\\](repository|local-repo)[/\\\\].*") && right.matches(".*[/\\\\](repository|local-repo)[/\\\\].*")) {
             left = getBaseRepoPath(left);
             right = getBaseRepoPath(right);
         }
@@ -358,96 +376,6 @@ public class DependencyBundlingAnalyzer extends AbstractAnalyzer {
     }
 
     /**
-     * Bundling Ruby gems that are identified from different .gemspec files but
-     * denote the same package path. This happens when Ruby bundler installs an
-     * application's dependencies by running "bundle install".
-     *
-     * @param dependency1 dependency to compare
-     * @param dependency2 dependency to compare
-     * @return true if the the dependencies being analyzed appear to be the
-     * same; otherwise false
-     */
-    private boolean isSameRubyGem(Dependency dependency1, Dependency dependency2) {
-        if (dependency1 == null || dependency2 == null
-                || !dependency1.getFileName().endsWith(".gemspec")
-                || !dependency2.getFileName().endsWith(".gemspec")
-                || dependency1.getPackagePath() == null
-                || dependency2.getPackagePath() == null) {
-            return false;
-        }
-        return dependency1.getPackagePath().equalsIgnoreCase(dependency2.getPackagePath());
-    }
-
-    /**
-     * Ruby gems installed by "bundle install" can have zero or more *.gemspec
-     * files, all of which have the same packagePath and should be grouped. If
-     * one of these gemspec is from <parent>/specifications/*.gemspec, because
-     * it is a stub with fully resolved gem meta-data created by Ruby bundler,
-     * this dependency should be the main one. Otherwise, use dependency2 as
-     * main.
-     *
-     * This method returns null if any dependency is not from *.gemspec, or the
-     * two do not have the same packagePath. In this case, they should not be
-     * grouped.
-     *
-     * @param dependency1 dependency to compare
-     * @param dependency2 dependency to compare
-     * @return the main dependency; or null if a gemspec is not included in the
-     * analysis
-     */
-    private Dependency getMainGemspecDependency(Dependency dependency1, Dependency dependency2) {
-        if (isSameRubyGem(dependency1, dependency2)) {
-            final File lFile = dependency1.getActualFile();
-            final File left = lFile.getParentFile();
-            if (left != null && left.getName().equalsIgnoreCase("specifications")) {
-                return dependency1;
-            }
-            return dependency2;
-        }
-        return null;
-    }
-
-    /**
-     * Bundling same swift dependencies with the same packagePath but identified
-     * by different analyzers.
-     *
-     * @param dependency1 dependency to test
-     * @param dependency2 dependency to test
-     * @return <code>true</code> if the dependencies appear to be the same;
-     * otherwise <code>false</code>
-     */
-    private boolean isSameSwiftPackage(Dependency dependency1, Dependency dependency2) {
-        if (dependency1 == null || dependency2 == null
-                || (!dependency1.getFileName().endsWith(".podspec")
-                && !dependency1.getFileName().equals("Package.swift"))
-                || (!dependency2.getFileName().endsWith(".podspec")
-                && !dependency2.getFileName().equals("Package.swift"))
-                || dependency1.getPackagePath() == null
-                || dependency2.getPackagePath() == null) {
-            return false;
-        }
-        return dependency1.getPackagePath().equalsIgnoreCase(dependency2.getPackagePath());
-    }
-
-    /**
-     * Determines which of the swift dependencies should be considered the
-     * primary.
-     *
-     * @param dependency1 the first swift dependency to compare
-     * @param dependency2 the second swift dependency to compare
-     * @return the primary swift dependency
-     */
-    private Dependency getMainSwiftDependency(Dependency dependency1, Dependency dependency2) {
-        if (isSameSwiftPackage(dependency1, dependency2)) {
-            if (dependency1.getFileName().endsWith(".podspec")) {
-                return dependency1;
-            }
-            return dependency2;
-        }
-        return null;
-    }
-
-    /**
      * This is likely a very broken attempt at determining if the 'left'
      * dependency is the 'core' library in comparison to the 'right' library.
      *
@@ -456,7 +384,7 @@ public class DependencyBundlingAnalyzer extends AbstractAnalyzer {
      * @return a boolean indicating whether or not the left dependency should be
      * considered the "core" version.
      */
-    boolean isCore(Dependency left, Dependency right) {
+    protected boolean isCore(Dependency left, Dependency right) {
         final String leftName = left.getFileName().toLowerCase();
         final String rightName = right.getFileName().toLowerCase();
 
@@ -469,10 +397,6 @@ public class DependencyBundlingAnalyzer extends AbstractAnalyzer {
                 || !rightName.contains("core") && leftName.contains("core")
                 || !rightName.contains("kernel") && leftName.contains("kernel")) {
             returnVal = true;
-//        } else if (leftName.matches(".*struts2\\-core.*") && rightName.matches(".*xwork\\-core.*")) {
-//            returnVal = true;
-//        } else if (rightName.matches(".*struts2\\-core.*") && leftName.matches(".*xwork\\-core.*")) {
-//            returnVal = false;
         } else {
             /*
              * considered splitting the names up and comparing the components,
@@ -575,6 +499,7 @@ public class DependencyBundlingAnalyzer extends AbstractAnalyzer {
      * @return true if the path contains '.war\' or '.ear\'.
      */
     private boolean containedInWar(String filePath) {
-        return filePath == null ? false : filePath.matches(".*\\.(ear|war)[\\\\/].*");
+        return filePath != null && filePath.matches(".*\\.(ear|war)[\\\\/].*");
     }
+
 }

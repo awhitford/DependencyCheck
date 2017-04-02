@@ -249,7 +249,7 @@ public final class CliParser {
 
         final Option excludes = Option.builder().argName("pattern").hasArg().longOpt(ARGUMENT.EXCLUDE)
                 .desc("Specify and exclusion pattern. This option can be specified multiple times"
-                        + " and it accepts Ant style excludsions.")
+                        + " and it accepts Ant style exclusions.")
                 .build();
 
         final Option props = Option.builder(ARGUMENT.PROP_SHORT).argName("file").hasArg().longOpt(ARGUMENT.PROP)
@@ -286,11 +286,12 @@ public final class CliParser {
                 .build();
 
         final Option experimentalEnabled = Option.builder().longOpt(ARGUMENT.EXPERIMENTAL)
-                .desc("Enables the experimental analzers.")
+                .desc("Enables the experimental analyzers.")
                 .build();
 
         final Option failOnCVSS = Option.builder().argName("score").hasArg().longOpt(ARGUMENT.FAIL_ON_CVSS)
-                .desc("Specifies if the build should be failed if a CVSS score above a specified level is identified. The default is 11; since the CVSS scores are 0-10, by default the build will never fail.")
+                .desc("Specifies if the build should be failed if a CVSS score above a specified level is identified. "
+                        + "The default is 11; since the CVSS scores are 0-10, by default the build will never fail.")
                 .build();
 
         //This is an option group because it can be specified more then once.
@@ -436,6 +437,11 @@ public final class CliParser {
         final Option disableCmakeAnalyzer = Option.builder().longOpt(ARGUMENT.DISABLE_CMAKE)
                 .desc("Disable the Cmake Analyzer.").build();
 
+        final Option cocoapodsAnalyzerEnabled = Option.builder().longOpt(ARGUMENT.DISABLE_COCOAPODS)
+                .desc("Disable the CocoaPods Analyzer.").build();
+        final Option swiftPackageManagerAnalyzerEnabled = Option.builder().longOpt(ARGUMENT.DISABLE_SWIFT)
+                .desc("Disable the swift package Analyzer.").build();
+
         final Option disableCentralAnalyzer = Option.builder().longOpt(ARGUMENT.DISABLE_CENTRAL)
                 .desc("Disable the Central Analyzer. If this analyzer is disabled it is likely you also want to disable "
                         + "the Nexus Analyzer.").build();
@@ -480,6 +486,8 @@ public final class CliParser {
                 .addOption(disableNuspecAnalyzer)
                 .addOption(disableCentralAnalyzer)
                 .addOption(disableNexusAnalyzer)
+                .addOption(cocoapodsAnalyzerEnabled)
+                .addOption(swiftPackageManagerAnalyzerEnabled)
                 .addOption(Option.builder().longOpt(ARGUMENT.DISABLE_NODE_JS)
                         .desc("Disable the Node.js Package Analyzer.").build())
                 .addOption(nexusUrl)
@@ -698,6 +706,28 @@ public final class CliParser {
      */
     public boolean isNodeJsDisabled() {
         return (line != null) && line.hasOption(ARGUMENT.DISABLE_NODE_JS);
+    }
+
+    /**
+     * Returns true if the disableCocoapodsAnalyzer command line argument was
+     * specified.
+     *
+     * @return true if the disableCocoapodsAnalyzer command line argument was
+     * specified; otherwise false
+     */
+    public boolean isCocoapodsAnalyzerDisabled() {
+        return (line != null) && line.hasOption(ARGUMENT.DISABLE_COCOAPODS);
+    }
+
+    /**
+     * Returns true if the disableSwiftPackageManagerAnalyzer command line
+     * argument was specified.
+     *
+     * @return true if the disableSwiftPackageManagerAnalyzer command line
+     * argument was specified; otherwise false
+     */
+    public boolean isSwiftPackageAnalyzerDisabled() {
+        return (line != null) && line.hasOption(ARGUMENT.DISABLE_SWIFT);
     }
 
     /**
@@ -1111,13 +1141,14 @@ public final class CliParser {
     }
 
     /**
-     * Returns the CVSS value to fail on
+     * Returns the CVSS value to fail on.
      *
-     * @return 11 if nothing is set. Otherwise it returns the int passed from the command line arg
+     * @return 11 if nothing is set. Otherwise it returns the int passed from
+     * the command line arg
      */
     public int getFailOnCVSS() {
-        if(line.hasOption(ARGUMENT.FAIL_ON_CVSS)) {
-            String value = line.getOptionValue(ARGUMENT.FAIL_ON_CVSS);
+        if (line.hasOption(ARGUMENT.FAIL_ON_CVSS)) {
+            final String value = line.getOptionValue(ARGUMENT.FAIL_ON_CVSS);
             try {
                 return Integer.parseInt(value);
             } catch (NumberFormatException nfe) {
@@ -1310,8 +1341,7 @@ public final class CliParser {
          */
         public static final String SUPPRESSION_FILE = "suppression";
         /**
-         * The CLI argument name for setting the location of the hint
-         * file.
+         * The CLI argument name for setting the location of the hint file.
          */
         public static final String HINTS_FILE = "hints";
         /**
@@ -1351,6 +1381,14 @@ public final class CliParser {
          * Disables the Cmake Analyzer.
          */
         public static final String DISABLE_CMAKE = "disableCmake";
+        /**
+         * Disables the cocoapods analyzer.
+         */
+        public static final String DISABLE_COCOAPODS = "disableCocoapodsAnalyzer";
+        /**
+         * Disables the swift package manager analyzer.
+         */
+        public static final String DISABLE_SWIFT = "disableSwiftPackageManagerAnalyzer";
         /**
          * Disables the Assembly Analyzer.
          */

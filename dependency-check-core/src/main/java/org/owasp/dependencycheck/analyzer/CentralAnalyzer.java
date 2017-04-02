@@ -103,14 +103,14 @@ public class CentralAnalyzer extends AbstractFileTypeAnalyzer {
      * <code>false</code>
      */
     private boolean checkEnabled() {
-        boolean retval = false;
+        boolean retVal = false;
 
         try {
             if (Settings.getBoolean(Settings.KEYS.ANALYZER_CENTRAL_ENABLED)) {
                 if (!Settings.getBoolean(Settings.KEYS.ANALYZER_NEXUS_ENABLED)
                         || NexusAnalyzer.DEFAULT_URL.equals(Settings.getString(Settings.KEYS.ANALYZER_NEXUS_URL))) {
                     LOGGER.debug("Enabling the Central analyzer");
-                    retval = true;
+                    retVal = true;
                 } else {
                     LOGGER.info("Nexus analyzer is enabled, disabling the Central Analyzer");
                 }
@@ -120,7 +120,7 @@ public class CentralAnalyzer extends AbstractFileTypeAnalyzer {
         } catch (InvalidSettingException ise) {
             LOGGER.warn("Invalid setting. Disabling the Central analyzer");
         }
-        return retval;
+        return retVal;
     }
 
     /**
@@ -193,7 +193,7 @@ public class CentralAnalyzer extends AbstractFileTypeAnalyzer {
      * @throws AnalysisException when there's an exception during analysis
      */
     @Override
-    public void analyzeFileType(Dependency dependency, Engine engine) throws AnalysisException {
+    public void analyzeDependency(Dependency dependency, Engine engine) throws AnalysisException {
         if (errorFlag || !isEnabled()) {
             return;
         }

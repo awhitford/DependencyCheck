@@ -26,7 +26,9 @@ import java.io.InputStreamReader;
 import java.io.Reader;
 import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.parsers.SAXParser;
-import javax.xml.parsers.SAXParserFactory;
+import org.apache.commons.io.ByteOrderMark;
+import org.apache.commons.io.input.BOMInputStream;
+import org.owasp.dependencycheck.utils.XmlUtils;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -56,21 +58,11 @@ public class PomParser {
      * @throws PomParseException thrown if the xml file cannot be parsed
      */
     public Model parse(File file) throws PomParseException {
-        FileInputStream fis = null;
-        try {
-            fis = new FileInputStream(file);
+        try (FileInputStream fis = new FileInputStream(file)) {
             return parse(fis);
         } catch (IOException ex) {
             LOGGER.debug("", ex);
             throw new PomParseException(ex);
-        } finally {
-            if (fis != null) {
-                try {
-                    fis.close();
-                } catch (IOException ex) {
-                    LOGGER.debug("Unable to close stream", ex);
-                }
-            }
         }
     }
 
@@ -85,28 +77,18 @@ public class PomParser {
     public Model parse(InputStream inputStream) throws PomParseException {
         try {
             final PomHandler handler = new PomHandler();
-            final SAXParserFactory factory = SAXParserFactory.newInstance();
-//            factory.setNamespaceAware(true);
-//            factory.setValidating(true);
-            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-            final SAXParser saxParser = factory.newSAXParser();
+            final SAXParser saxParser = XmlUtils.buildSecureSaxParser();
             final XMLReader xmlReader = saxParser.getXMLReader();
             xmlReader.setContentHandler(handler);
-
-            final Reader reader = new InputStreamReader(inputStream, "UTF-8");
+            final BOMInputStream bomStream = new BOMInputStream(inputStream);
+            final ByteOrderMark bom = bomStream.getBOM();
+            final String defaultEncoding = "UTF-8";
+            final String charsetName = bom == null ? defaultEncoding : bom.getCharsetName();
+            final Reader reader = new InputStreamReader(bomStream, charsetName);
             final InputSource in = new InputSource(reader);
-            //in.setEncoding("UTF-8");
-
             xmlReader.parse(in);
-
             return handler.getModel();
-        } catch (ParserConfigurationException ex) {
-            LOGGER.debug("", ex);
-            throw new PomParseException(ex);
-        } catch (SAXException ex) {
-            LOGGER.debug("", ex);
-            throw new PomParseException(ex);
-        } catch (FileNotFoundException ex) {
+        } catch (ParserConfigurationException | SAXException | FileNotFoundException ex) {
             LOGGER.debug("", ex);
             throw new PomParseException(ex);
         } catch (IOException ex) {

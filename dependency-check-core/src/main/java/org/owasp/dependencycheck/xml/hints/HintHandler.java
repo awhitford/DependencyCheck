@@ -48,6 +48,11 @@ public class HintHandler extends DefaultHandler {
     /**
      * Element name.
      */
+    private static final String REMOVE = "remove";
+
+    /**
+     * Element name.
+     */
     private static final String EVIDENCE = "evidence";
     /**
      * Element name.
@@ -110,7 +115,7 @@ public class HintHandler extends DefaultHandler {
     /**
      * The list of hint rules.
      */
-    private final List<HintRule> hintRules = new ArrayList<HintRule>();
+    private final List<HintRule> hintRules = new ArrayList<>();
 
     /**
      * Returns the list of hint rules.
@@ -124,7 +129,7 @@ public class HintHandler extends DefaultHandler {
     /**
      * The list of vendor duplicating hint rules.
      */
-    private final List<VendorDuplicatingHintRule> vendorDuplicatingHintRules = new ArrayList<VendorDuplicatingHintRule>();
+    private final List<VendorDuplicatingHintRule> vendorDuplicatingHintRules = new ArrayList<>();
 
     /**
      * Returns the list of vendor duplicating hint rules.
@@ -139,16 +144,34 @@ public class HintHandler extends DefaultHandler {
      * The current rule being read.
      */
     private HintRule rule;
+
+    /**
+     * Internal type to track the parent node state.
+     */
+    enum ParentType {
+        /**
+         * Marks the add node.
+         */
+        ADD,
+        /**
+         * Marks the given node.
+         */
+        GIVEN,
+        /**
+         * Marks the remove node.
+         */
+        REMOVE
+    }
     /**
      * The current state of the parent node (to differentiate between 'add' and
      * 'given').
      */
-    private boolean inAddNode = false;
+    private ParentType nodeType = ParentType.GIVEN;
 
     /**
      * Handles the start element event.
      *
-     * @param uri the uri of the element being processed
+     * @param uri the URI of the element being processed
      * @param localName the local name of the element being processed
      * @param qName the qName of the element being processed
      * @param attr the attributes of the element being processed
@@ -156,62 +179,99 @@ public class HintHandler extends DefaultHandler {
      */
     @Override
     public void startElement(String uri, String localName, String qName, Attributes attr) throws SAXException {
-        if (HINT.equals(qName)) {
-            rule = new HintRule();
-        } else if (ADD.equals(qName)) {
-            inAddNode = true;
-        } else if (GIVEN.equals(qName)) {
-            inAddNode = false;
-        } else if (EVIDENCE.equals(qName)) {
-            final String hintType = attr.getValue(TYPE);
-            if (VENDOR.equals(hintType)) {
-                if (inAddNode) {
-                    rule.addAddVendor(attr.getValue(SOURCE),
-                            attr.getValue(NAME),
-                            attr.getValue(VALUE),
-                            Confidence.valueOf(attr.getValue(CONFIDENCE)));
-                } else {
-                    rule.addGivenVendor(attr.getValue(SOURCE),
-                            attr.getValue(NAME),
-                            attr.getValue(VALUE),
-                            Confidence.valueOf(attr.getValue(CONFIDENCE)));
-                }
-            } else if (PRODUCT.equals(hintType)) {
-                if (inAddNode) {
-                    rule.addAddProduct(attr.getValue(SOURCE),
-                            attr.getValue(NAME),
-                            attr.getValue(VALUE),
-                            Confidence.valueOf(attr.getValue(CONFIDENCE)));
-                } else {
-                    rule.addGivenProduct(attr.getValue(SOURCE),
-                            attr.getValue(NAME),
-                            attr.getValue(VALUE),
-                            Confidence.valueOf(attr.getValue(CONFIDENCE)));
-                }
-            } else if (VERSION.equals(hintType)) {
-                if (inAddNode) {
-                    rule.addAddVersion(attr.getValue(SOURCE),
-                            attr.getValue(NAME),
-                            attr.getValue(VALUE),
-                            Confidence.valueOf(attr.getValue(CONFIDENCE)));
-                }
+        if (null != qName) {
+            switch (qName) {
+                case HINT:
+                    rule = new HintRule();
+                    break;
+                case ADD:
+                    nodeType = ParentType.ADD;
+                    break;
+                case GIVEN:
+                    nodeType = ParentType.GIVEN;
+                    break;
+                case REMOVE:
+                    nodeType = ParentType.REMOVE;
+                    break;
+                case EVIDENCE:
+                    final String hintType = attr.getValue(TYPE);
+                    if (null != hintType && null != nodeType) {
+                        final String source = attr.getValue(SOURCE);
+                        final String name = attr.getValue(NAME);
+                        final String value = attr.getValue(VALUE);
+                        final Confidence confidence = Confidence.valueOf(attr.getValue(CONFIDENCE));
+                        switch (hintType) {
+                            case VENDOR:
+                                switch (nodeType) {
+                                    case ADD:
+                                        rule.addAddVendor(source, name, value, confidence);
+                                        break;
+                                    case REMOVE:
+                                        rule.addRemoveVendor(source, name, value, confidence);
+                                        break;
+                                    case GIVEN:
+                                        rule.addGivenVendor(source, name, value, confidence);
+                                        break;
+                                    default:
+                                        break;
+                                }
+                                break;
+                            case PRODUCT:
+                                switch (nodeType) {
+                                    case ADD:
+                                        rule.addAddProduct(source, name, value, confidence);
+                                        break;
+                                    case REMOVE:
+                                        rule.addRemoveProduct(source, name, value, confidence);
+                                        break;
+                                    case GIVEN:
+                                        rule.addGivenProduct(source, name, value, confidence);
+                                        break;
+                                    default:
+                                        break;
+                                }
+                                break;
+                            case VERSION:
+                                switch (nodeType) {
+                                    case ADD:
+                                        rule.addAddVersion(source, name, value, confidence);
+                                        break;
+                                    case REMOVE:
+                                        rule.addRemoveVersion(source, name, value, confidence);
+                                        break;
+                                    case GIVEN:
+                                        rule.addGivenVersion(source, name, value, confidence);
+                                        break;
+                                    default:
+                                        break;
+                                }
+                                break;
+                            default:
+                                break;
+                        }
+                    }
+                    break;
+                case FILE_NAME:
+                    final PropertyType pt = new PropertyType();
+                    pt.setValue(attr.getValue(CONTAINS));
+                    if (attr.getLength() > 0) {
+                        final String regex = attr.getValue(REGEX);
+                        if (regex != null) {
+                            pt.setRegex(Boolean.parseBoolean(regex));
+                        }
+                        final String caseSensitive = attr.getValue(CASE_SENSITIVE);
+                        if (caseSensitive != null) {
+                            pt.setCaseSensitive(Boolean.parseBoolean(caseSensitive));
+                        }
+                    }
+                    rule.addFilename(pt);
+                    break;
+                case VENDOR_DUPLICATING_RULE:
+                    vendorDuplicatingHintRules.add(new VendorDuplicatingHintRule(attr.getValue(VALUE), attr.getValue(DUPLICATE)));
+                    break;
+                default:
+                    break;
             }
-        } else if (FILE_NAME.equals(qName)) {
-            final PropertyType pt = new PropertyType();
-            pt.setValue(attr.getValue(CONTAINS));
-            if (attr.getLength() > 0) {
-                final String regex = attr.getValue(REGEX);
-                if (regex != null) {
-                    pt.setRegex(Boolean.parseBoolean(regex));
-                }
-                final String caseSensitive = attr.getValue(CASE_SENSITIVE);
-                if (caseSensitive != null) {
-                    pt.setCaseSensitive(Boolean.parseBoolean(caseSensitive));
-                }
-            }
-            rule.addFilename(pt);
-        } else if (VENDOR_DUPLICATING_RULE.equals(qName)) {
-            vendorDuplicatingHintRules.add(new VendorDuplicatingHintRule(attr.getValue(VALUE), attr.getValue(DUPLICATE)));
         }
     }
 

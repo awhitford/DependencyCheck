@@ -17,38 +17,36 @@
  */
 package org.owasp.dependencycheck.maven;
 
-import java.io.BufferedOutputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.ObjectOutputStream;
 import java.util.List;
 import java.util.Locale;
-import org.eclipse.aether.artifact.Artifact;
+import org.apache.maven.artifact.Artifact;
+import org.apache.maven.artifact.repository.ArtifactRepository;
 import org.apache.maven.doxia.sink.Sink;
+import org.apache.maven.execution.MavenSession;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.Component;
 import org.apache.maven.plugins.annotations.Parameter;
+import org.apache.maven.project.DefaultProjectBuildingRequest;
 import org.apache.maven.project.MavenProject;
+import org.apache.maven.project.ProjectBuildingRequest;
 import org.apache.maven.reporting.MavenReport;
 import org.apache.maven.reporting.MavenReportException;
 import org.apache.maven.settings.Proxy;
 import org.apache.maven.settings.Server;
+import org.apache.maven.shared.artifact.ArtifactCoordinate;
+import org.apache.maven.shared.artifact.TransferUtils;
+import org.apache.maven.shared.artifact.resolve.ArtifactResolver;
+import org.apache.maven.shared.artifact.resolve.ArtifactResolverException;
 import org.apache.maven.shared.dependency.graph.DependencyGraphBuilder;
 import org.apache.maven.shared.dependency.graph.DependencyGraphBuilderException;
 import org.apache.maven.shared.dependency.graph.DependencyNode;
-import org.eclipse.aether.RepositorySystem;
-import org.eclipse.aether.RepositorySystemSession;
-import org.eclipse.aether.artifact.DefaultArtifact;
-import org.eclipse.aether.repository.RemoteRepository;
-import org.eclipse.aether.resolution.ArtifactRequest;
-import org.eclipse.aether.resolution.ArtifactResolutionException;
-import org.eclipse.aether.resolution.ArtifactResult;
+import org.owasp.dependencycheck.Engine;
 import org.owasp.dependencycheck.data.nexus.MavenArtifact;
 import org.owasp.dependencycheck.data.nvdcve.CveDB;
 import org.owasp.dependencycheck.data.nvdcve.DatabaseException;
@@ -60,7 +58,6 @@ import org.owasp.dependencycheck.dependency.Vulnerability;
 import org.owasp.dependencycheck.exception.ExceptionCollection;
 import org.owasp.dependencycheck.exception.ReportException;
 import org.owasp.dependencycheck.reporting.ReportGenerator;
-import org.owasp.dependencycheck.utils.ExpectedOjectInputStream;
 import org.owasp.dependencycheck.utils.Settings;
 import org.sonatype.plexus.components.sec.dispatcher.DefaultSecDispatcher;
 import org.sonatype.plexus.components.sec.dispatcher.SecDispatcher;
@@ -81,6 +78,10 @@ public abstract class BaseDependencyCheckMojo extends AbstractMojo implements Ma
      * System specific new line character.
      */
     private static final String NEW_LINE = System.getProperty("line.separator", "\n").intern();
+    /**
+     * A flag indicating whether or not the Maven site is being generated.
+     */
+    private boolean generatingSite = false;
     //</editor-fold>
     // <editor-fold defaultstate="collapsed" desc="Maven bound parameters and components">
     /**
@@ -95,15 +96,6 @@ public abstract class BaseDependencyCheckMojo extends AbstractMojo implements Ma
     private boolean failOnError;
 
     /**
-     * Returns if the mojo should fail the build if an exception occurs.
-     *
-     * @return whether or not the mojo should fail the build
-     */
-    protected boolean isFailOnError() {
-        return failOnError;
-    }
-
-    /**
      * The Maven Project Object.
      */
     @Parameter(property = "project", required = true, readonly = true)
@@ -114,23 +106,24 @@ public abstract class BaseDependencyCheckMojo extends AbstractMojo implements Ma
     @Parameter(readonly = true, required = true, property = "reactorProjects")
     private List<MavenProject> reactorProjects;
     /**
-     * The entry point to Aether, i.e. the component doing all the work.
+     * The entry point towards a Maven version independent way of resolving
+     * artifacts (handles both Maven 3.0 Sonatype and Maven 3.1+ eclipse Aether
+     * implementations).
      */
     @Component
-    private RepositorySystem repoSystem;
+    private ArtifactResolver artifactResolver;
 
     /**
-     * The current repository/network configuration of Maven.
+     * The Maven Session.
      */
-    @Parameter(defaultValue = "${repositorySystemSession}", readonly = true)
-    private RepositorySystemSession repoSession;
+    @Parameter(defaultValue = "${session}", readonly = true, required = true)
+    protected MavenSession session;
 
     /**
-     * The project's remote repositories to use for the resolution of plug-ins
-     * and their dependencies.
+     * Remote repositories which will be searched for artifacts.
      */
-    @Parameter(defaultValue = "${project.remotePluginRepositories}", readonly = true)
-    private List<RemoteRepository> remoteRepos;
+    @Parameter(defaultValue = "${project.remoteArtifactRepositories}", readonly = true, required = true)
+    private List<ArtifactRepository> remoteRepositories;
 
     /**
      * Component within Maven to build the dependency graph.
@@ -157,6 +150,12 @@ public abstract class BaseDependencyCheckMojo extends AbstractMojo implements Ma
     @SuppressWarnings("CanBeFinal")
     @Parameter(property = "failBuildOnCVSS", defaultValue = "11", required = true)
     private float failBuildOnCVSS = 11;
+    /**
+     * Fail the build if any dependency has a vulnerability listed.
+     */
+    @SuppressWarnings("CanBeFinal")
+    @Parameter(property = "failBuildOnAnyVulnerability", defaultValue = "false", required = true)
+    private boolean failBuildOnAnyVulnerability = false;
     /**
      * Sets whether auto-updating of the NVD CVE/CPE data is enabled. It is not
      * recommended that this be turned to false. Default is true.
@@ -298,6 +297,30 @@ public abstract class BaseDependencyCheckMojo extends AbstractMojo implements Ma
     private Boolean nexusAnalyzerEnabled;
 
     /**
+     * Whether or not the Ruby Bundle Audit Analyzer is enabled.
+     */
+    @Parameter(property = "bundleAuditAnalyzerEnabled", required = false)
+    private Boolean bundleAuditAnalyzerEnabled;
+
+    /**
+     * Sets the path for the bundle-audit binary.
+     */
+    @Parameter(property = "bundleAuditPath", defaultValue = "", required = false)
+    private String bundleAuditPath;
+
+    /**
+     * Whether or not the CocoaPods Analyzer is enabled.
+     */
+    @Parameter(property = "cocoapodsAnalyzerEnabled", required = false)
+    private Boolean cocoapodsAnalyzerEnabled;
+
+    /**
+     * Whether or not the Swift package Analyzer is enabled.
+     */
+    @Parameter(property = "swiftPackageManagerAnalyzerEnabled", required = false)
+    private Boolean swiftPackageManagerAnalyzerEnabled;
+
+    /**
      * The URL of a Nexus server's REST API end point
      * (http://domain/nexus/service/local).
      */
@@ -314,14 +337,6 @@ public abstract class BaseDependencyCheckMojo extends AbstractMojo implements Ma
     @Parameter(property = "connectionString", defaultValue = "", required = false)
     private String connectionString;
 
-    /**
-     * Returns the connection string.
-     *
-     * @return the connection string
-     */
-    protected String getConnectionString() {
-        return connectionString;
-    }
     /**
      * The database driver name. An example would be org.h2.Driver.
      */
@@ -444,9 +459,9 @@ public abstract class BaseDependencyCheckMojo extends AbstractMojo implements Ma
     @Parameter(property = "externalReport")
     @Deprecated
     private String externalReport = null;
+
     // </editor-fold>
     //<editor-fold defaultstate="collapsed" desc="Base Maven implementation">
-
     /**
      * Executes dependency-check.
      *
@@ -498,17 +513,30 @@ public abstract class BaseDependencyCheckMojo extends AbstractMojo implements Ma
     }
 
     /**
-     * A flag indicating whether or not the maven site is being generated.
-     */
-    private boolean generatingSite = false;
-
-    /**
      * Returns true if the Maven site is being generated.
      *
      * @return true if the Maven site is being generated
      */
     protected boolean isGeneratingSite() {
         return generatingSite;
+    }
+
+    /**
+     * Returns the connection string.
+     *
+     * @return the connection string
+     */
+    protected String getConnectionString() {
+        return connectionString;
+    }
+
+    /**
+     * Returns if the mojo should fail the build if an exception occurs.
+     *
+     * @return whether or not the mojo should fail the build
+     */
+    protected boolean isFailOnError() {
+        return failOnError;
     }
 
     /**
@@ -567,29 +595,6 @@ public abstract class BaseDependencyCheckMojo extends AbstractMojo implements Ma
     }
 
     /**
-     * Returns the correct output directory depending on if a site is being
-     * executed or not.
-     *
-     * @param current the Maven project to get the output directory from
-     * @return the directory to write the report(s)
-     */
-    protected File getDataFile(MavenProject current) {
-        if (getLog().isDebugEnabled()) {
-            getLog().debug(String.format("Getting data filefor %s using key '%s'", current.getName(), getDataFileContextKey()));
-        }
-        final Object obj = current.getContextValue(getDataFileContextKey());
-        if (obj != null) {
-            if (obj instanceof String) {
-                final File f = new File((String) obj);
-                return f;
-            }
-        } else if (getLog().isDebugEnabled()) {
-            getLog().debug("Context value not found");
-        }
-        return null;
-    }
-
-    /**
      * Scans the project's artifacts and adds them to the engine's dependency
      * list.
      *
@@ -598,38 +603,11 @@ public abstract class BaseDependencyCheckMojo extends AbstractMojo implements Ma
      * @return a collection of exceptions that may have occurred while resolving
      * and scanning the dependencies
      */
-    protected ExceptionCollection scanArtifacts(MavenProject project, MavenEngine engine) {
-        // <editor-fold defaultstate="collapsed" desc="old implementation">
-        /*
-            for (Artifact a : project.getArtifacts()) {
-            if (excludeFromScan(a)) {
-            continue;
-            }
-            final List<Dependency> deps = engine.scan(a.getFile().getAbsoluteFile());
-            if (deps != null) {
-            if (deps.size() == 1) {
-            final Dependency d = deps.get(0);
-            if (d != null) {
-            final MavenArtifact ma = new MavenArtifact(a.getGroupId(), a.getArtifactId(), a.getVersion());
-            d.addAsEvidence("pom", ma, Confidence.HIGHEST);
-            d.addProjectReference(project.getName());
-            if (getLog().isDebugEnabled()) {
-            getLog().debug(String.format("Adding project reference %s on dependency %s", project.getName(),
-            d.getDisplayFileName()));
-            }
-            }
-            } else if (getLog().isDebugEnabled()) {
-            final String msg = String.format("More then 1 dependency was identified in first pass scan of '%s:%s:%s'",
-            a.getGroupId(), a.getArtifactId(), a.getVersion());
-            getLog().debug(msg);
-            }
-            }
-            }
-         */
-        // </editor-fold>
+    protected ExceptionCollection scanArtifacts(MavenProject project, Engine engine) {
         try {
             final DependencyNode dn = dependencyGraphBuilder.buildDependencyGraph(project, null, reactorProjects);
-            return collectDependencies(engine, project, dn.getChildren());
+            final ProjectBuildingRequest buildingRequest = newResolveArtifactProjectBuildingRequest();
+            return collectDependencies(engine, project, dn.getChildren(), buildingRequest);
         } catch (DependencyGraphBuilderException ex) {
             final String msg = String.format("Unable to build dependency graph on project %s", project.getName());
             getLog().debug(msg, ex);
@@ -645,30 +623,28 @@ public abstract class BaseDependencyCheckMojo extends AbstractMojo implements Ma
      * @param project the project being scanned
      * @param nodes the list of dependency nodes, generally obtained via the
      * DependencyGraphBuilder
+     * @param buildingRequest the Maven project building request
      * @return a collection of exceptions that may have occurred while resolving
      * and scanning the dependencies
      */
-    private ExceptionCollection collectDependencies(MavenEngine engine, MavenProject project, List<DependencyNode> nodes) {
+    private ExceptionCollection collectDependencies(Engine engine, MavenProject project, List<DependencyNode> nodes, ProjectBuildingRequest buildingRequest) {
         ExceptionCollection exCol = null;
         for (DependencyNode dependencyNode : nodes) {
-            exCol = collectDependencies(engine, project, dependencyNode.getChildren());
+            exCol = collectDependencies(engine, project, dependencyNode.getChildren(), buildingRequest);
             if (excludeFromScan(dependencyNode.getArtifact().getScope())) {
                 continue;
             }
-            final ArtifactRequest request = new ArtifactRequest();
-            request.setArtifact(new DefaultArtifact(dependencyNode.getArtifact().getId()));
-            request.setRepositories(remoteRepos);
             try {
-                final ArtifactResult result = repoSystem.resolveArtifact(repoSession, request);
-                if (result.isResolved() && result.getArtifact() != null && result.getArtifact().getFile() != null) {
-                    final List<Dependency> deps = engine.scan(result.getArtifact().getFile().getAbsoluteFile(),
+                final ArtifactCoordinate coordinate = TransferUtils.toArtifactCoordinate(dependencyNode.getArtifact());
+                final Artifact result = artifactResolver.resolveArtifact(buildingRequest, coordinate).getArtifact();
+                if (result.isResolved() && result.getFile() != null) {
+                    final List<Dependency> deps = engine.scan(result.getFile().getAbsoluteFile(),
                             project.getName() + ":" + dependencyNode.getArtifact().getScope());
                     if (deps != null) {
                         if (deps.size() == 1) {
                             final Dependency d = deps.get(0);
                             if (d != null) {
-                                final Artifact a = result.getArtifact();
-                                final MavenArtifact ma = new MavenArtifact(a.getGroupId(), a.getArtifactId(), a.getVersion());
+                                final MavenArtifact ma = new MavenArtifact(result.getGroupId(), result.getArtifactId(), result.getVersion());
                                 d.addAsEvidence("pom", ma, Confidence.HIGHEST);
                                 if (getLog().isDebugEnabled()) {
                                     getLog().debug(String.format("Adding project reference %s on dependency %s",
@@ -676,7 +652,7 @@ public abstract class BaseDependencyCheckMojo extends AbstractMojo implements Ma
                                 }
                             }
                         } else if (getLog().isDebugEnabled()) {
-                            final String msg = String.format("More then 1 dependency was identified in first pass scan of '%s' in project %s",
+                            final String msg = String.format("More than 1 dependency was identified in first pass scan of '%s' in project %s",
                                     dependencyNode.getArtifact().getId(), project.getName());
                             getLog().debug(msg);
                         }
@@ -687,9 +663,6 @@ public abstract class BaseDependencyCheckMojo extends AbstractMojo implements Ma
                             exCol = new ExceptionCollection();
                         }
                         getLog().error(msg);
-                        for (Exception ex : result.getExceptions()) {
-                            exCol.addException(ex);
-                        }
                     }
                 } else {
                     final String msg = String.format("Unable to resolve '%s' in project %s",
@@ -698,11 +671,8 @@ public abstract class BaseDependencyCheckMojo extends AbstractMojo implements Ma
                     if (exCol == null) {
                         exCol = new ExceptionCollection();
                     }
-                    for (Exception ex : result.getExceptions()) {
-                        exCol.addException(ex);
-                    }
                 }
-            } catch (ArtifactResolutionException ex) {
+            } catch (ArtifactResolverException ex) {
                 if (exCol == null) {
                     exCol = new ExceptionCollection();
                 }
@@ -713,7 +683,18 @@ public abstract class BaseDependencyCheckMojo extends AbstractMojo implements Ma
     }
 
     /**
-     * Executes the dependency-check scan and generates the necassary report.
+     * @return Returns a new ProjectBuildingRequest populated from the current
+     * session and the current project remote repositories, used to resolve
+     * artifacts.
+     */
+    public ProjectBuildingRequest newResolveArtifactProjectBuildingRequest() {
+        final ProjectBuildingRequest buildingRequest = new DefaultProjectBuildingRequest(session.getProjectBuildingRequest());
+        buildingRequest.setRemoteRepositories(remoteRepositories);
+        return buildingRequest;
+    }
+
+    /**
+     * Executes the dependency-check scan and generates the necessary report.
      *
      * @throws MojoExecutionException thrown if there is an exception running
      * the scan
@@ -793,14 +774,14 @@ public abstract class BaseDependencyCheckMojo extends AbstractMojo implements Ma
     //</editor-fold>
 
     /**
-     * Initializes a new <code>MavenEngine</code> that can be used for scanning.
+     * Initializes a new <code>Engine</code> that can be used for scanning.
      *
-     * @return a newly instantiated <code>MavenEngine</code>
+     * @return a newly instantiated <code>Engine</code>
      * @throws DatabaseException thrown if there is a database exception
      */
-    protected MavenEngine initializeEngine() throws DatabaseException {
+    protected Engine initializeEngine() throws DatabaseException {
         populateSettings();
-        return new MavenEngine(this.project, this.reactorProjects);
+        return new Engine();
     }
 
     /**
@@ -840,7 +821,7 @@ public abstract class BaseDependencyCheckMojo extends AbstractMojo implements Ma
         }
 
         if (proxyUrl != null && !proxyUrl.isEmpty()) {
-            getLog().warn("Deprecated configuration detected, proxyUrl will be ignored; use the maven settings " + "to configure the proxy instead");
+            getLog().warn("Deprecated configuration detected, proxyUrl will be ignored; use the maven settings to configure the proxy instead");
         }
         final Proxy proxy = getMavenProxy();
         if (proxy != null) {
@@ -877,6 +858,10 @@ public abstract class BaseDependencyCheckMojo extends AbstractMojo implements Ma
         Settings.setBooleanIfNotNull(Settings.KEYS.ANALYZER_AUTOCONF_ENABLED, autoconfAnalyzerEnabled);
         Settings.setBooleanIfNotNull(Settings.KEYS.ANALYZER_COMPOSER_LOCK_ENABLED, composerAnalyzerEnabled);
         Settings.setBooleanIfNotNull(Settings.KEYS.ANALYZER_NODE_PACKAGE_ENABLED, nodeAnalyzerEnabled);
+        Settings.setBooleanIfNotNull(Settings.KEYS.ANALYZER_BUNDLE_AUDIT_ENABLED, bundleAuditAnalyzerEnabled);
+        Settings.setStringIfNotNull(Settings.KEYS.ANALYZER_BUNDLE_AUDIT_PATH, bundleAuditPath);
+        Settings.setBooleanIfNotNull(Settings.KEYS.ANALYZER_COCOAPODS_ENABLED, cocoapodsAnalyzerEnabled);
+        Settings.setBooleanIfNotNull(Settings.KEYS.ANALYZER_SWIFT_PACKAGE_MANAGER_ENABLED, swiftPackageManagerAnalyzerEnabled);
 
         //Database configuration
         Settings.setStringIfNotEmpty(Settings.KEYS.DB_DRIVER_NAME, databaseDriverName);
@@ -977,10 +962,7 @@ public abstract class BaseDependencyCheckMojo extends AbstractMojo implements Ma
         if (skipProvidedScope && org.apache.maven.artifact.Artifact.SCOPE_PROVIDED.equals(scope)) {
             return true;
         }
-        if (skipRuntimeScope && !org.apache.maven.artifact.Artifact.SCOPE_RUNTIME.equals(scope)) {
-            return true;
-        }
-        return false;
+        return skipRuntimeScope && !org.apache.maven.artifact.Artifact.SCOPE_RUNTIME.equals(scope);
     }
 
     /**
@@ -1023,20 +1005,15 @@ public abstract class BaseDependencyCheckMojo extends AbstractMojo implements Ma
      * @param outputDir the directory path to write the report(s)
      * @throws ReportException thrown if there is an error writing the report
      */
-    protected void writeReports(MavenEngine engine, MavenProject p, File outputDir) throws ReportException {
+    protected void writeReports(Engine engine, MavenProject p, File outputDir) throws ReportException {
         DatabaseProperties prop = null;
-        CveDB cve = null;
         try {
-            cve = new CveDB();
-            cve.open();
+            final CveDB cve = CveDB.getInstance();
             prop = cve.getDatabaseProperties();
         } catch (DatabaseException ex) {
+            //TODO shouldn't this throw an exception?
             if (getLog().isDebugEnabled()) {
                 getLog().debug("Unable to retrieve DB Properties", ex);
-            }
-        } finally {
-            if (cve != null) {
-                cve.close();
             }
         }
         final ReportGenerator r = new ReportGenerator(p.getName(), engine.getDependencies(), engine.getAnalyzers(), prop);
@@ -1059,28 +1036,32 @@ public abstract class BaseDependencyCheckMojo extends AbstractMojo implements Ma
      * higher then the threshold set
      */
     protected void checkForFailure(List<Dependency> dependencies) throws MojoFailureException {
-        if (failBuildOnCVSS <= 10) {
-            final StringBuilder ids = new StringBuilder();
-            for (Dependency d : dependencies) {
-                boolean addName = true;
-                for (Vulnerability v : d.getVulnerabilities()) {
-                    if (v.getCvssScore() >= failBuildOnCVSS) {
-                        if (addName) {
-                            addName = false;
-                            ids.append(NEW_LINE).append(d.getFileName()).append(": ");
-                            ids.append(v.getName());
-                        } else {
-                            ids.append(", ").append(v.getName());
-                        }
+        final StringBuilder ids = new StringBuilder();
+        for (Dependency d : dependencies) {
+            boolean addName = true;
+            for (Vulnerability v : d.getVulnerabilities()) {
+                if (failBuildOnAnyVulnerability || v.getCvssScore() >= failBuildOnCVSS) {
+                    if (addName) {
+                        addName = false;
+                        ids.append(NEW_LINE).append(d.getFileName()).append(": ");
+                        ids.append(v.getName());
+                    } else {
+                        ids.append(", ").append(v.getName());
                     }
                 }
             }
-            if (ids.length() > 0) {
-                final String msg = String.format("%n%nDependency-Check Failure:%n"
-                        + "One or more dependencies were identified with vulnerabilities that have a CVSS score greater then '%.1f': %s%n"
-                        + "See the dependency-check report for more details.%n%n", failBuildOnCVSS, ids.toString());
-                throw new MojoFailureException(msg);
+        }
+        if (ids.length() > 0) {
+            final String msg;
+            if (failBuildOnAnyVulnerability) {
+                msg = String.format("%n%nOne or more dependencies were identified with vulnerabilities: %n%s%n%n"
+                        + "See the dependency-check report for more details.%n%n", ids.toString());
+            } else {
+                msg = String.format("%n%nOne or more dependencies were identified with vulnerabilities that have a CVSS score greater than '%.1f': "
+                        + "%n%s%n%nSee the dependency-check report for more details.%n%n", failBuildOnCVSS, ids.toString());
             }
+
+            throw new MojoFailureException(msg);
         }
     }
 
@@ -1151,118 +1132,5 @@ public abstract class BaseDependencyCheckMojo extends AbstractMojo implements Ma
         return "dependency-output-dir-" + dataFileName;
     }
 
-    /**
-     * Writes the scan data to disk. This is used to serialize the scan data
-     * between the "check" and "aggregate" phase.
-     *
-     * @param mp the mMven project for which the data file was created
-     * @param writeTo the directory to write the data file
-     * @param dependencies the list of dependencies to serialize
-     */
-    protected void writeDataFile(MavenProject mp, File writeTo, List<Dependency> dependencies) {
-        File file;
-        //check to see if this was already written out
-        if (mp.getContextValue(this.getDataFileContextKey()) == null) {
-            if (writeTo == null) {
-                file = new File(mp.getBuild().getDirectory());
-                file = new File(file, dataFileName);
-            } else {
-                file = new File(writeTo, dataFileName);
-            }
-            final File parent = file.getParentFile();
-            if (!parent.isDirectory() && !parent.mkdirs()) {
-                getLog().error(String.format("Directory '%s' does not exist and cannot be created; unable to write data file.",
-                        parent.getAbsolutePath()));
-            }
-
-            ObjectOutputStream out = null;
-            try {
-                if (dependencies != null) {
-                    out = new ObjectOutputStream(new BufferedOutputStream(new FileOutputStream(file)));
-                    out.writeObject(dependencies);
-                }
-                if (getLog().isDebugEnabled()) {
-                    getLog().debug(String.format("Serialized data file written to '%s' for %s, referenced by key %s",
-                            file.getAbsolutePath(), mp.getName(), this.getDataFileContextKey()));
-                }
-                mp.setContextValue(this.getDataFileContextKey(), file.getAbsolutePath());
-            } catch (IOException ex) {
-                getLog().warn("Unable to create data file used for report aggregation; "
-                        + "if report aggregation is being used the results may be incomplete.");
-                if (getLog().isDebugEnabled()) {
-                    getLog().debug(ex.getMessage(), ex);
-                }
-            } finally {
-                if (out != null) {
-                    try {
-                        out.close();
-                    } catch (IOException ex) {
-                        if (getLog().isDebugEnabled()) {
-                            getLog().debug("ignore", ex);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * Reads the serialized scan data from disk. This is used to serialize the
-     * scan data between the "check" and "aggregate" phase.
-     *
-     * @param project the Maven project to read the data file from
-     * @return a <code>MavenEngine</code> object populated with dependencies if
-     * the serialized data file exists; otherwise <code>null</code> is returned
-     */
-    protected List<Dependency> readDataFile(MavenProject project) {
-        final Object oPath = project.getContextValue(this.getDataFileContextKey());
-        if (oPath == null) {
-            return null;
-        }
-        List<Dependency> ret = null;
-        final String path = (String) oPath;
-        //ObjectInputStream ois = null;
-        ExpectedOjectInputStream ois = null;
-        try {
-            //ois = new ObjectInputStream(new FileInputStream(path));
-            ois = new ExpectedOjectInputStream(new FileInputStream(path),
-                    "java.util.ArrayList",
-                    "java.util.HashSet",
-                    "java.util.TreeSet",
-                    "java.lang.AbstractSet",
-                    "java.lang.AbstractCollection",
-                    "java.lang.Enum",
-                    "org.owasp.dependencycheck.dependency.Confidence",
-                    "org.owasp.dependencycheck.dependency.Dependency",
-                    "org.owasp.dependencycheck.dependency.Evidence",
-                    "org.owasp.dependencycheck.dependency.EvidenceCollection",
-                    "org.owasp.dependencycheck.dependency.Identifier",
-                    "org.owasp.dependencycheck.dependency.Reference",
-                    "org.owasp.dependencycheck.dependency.Vulnerability",
-                    "org.owasp.dependencycheck.dependency.VulnerabilityComparator",
-                    "org.owasp.dependencycheck.dependency.VulnerableSoftware",
-                    "org.owasp.dependencycheck.data.cpe.IndexEntry");
-            @SuppressWarnings("unchecked")
-            final List<Dependency> depList = (List<Dependency>) ois.readObject();
-            ret = depList;
-        } catch (FileNotFoundException ex) {
-            //TODO fix logging
-            getLog().error("", ex);
-        } catch (IOException ex) {
-            getLog().error("", ex);
-        } catch (ClassNotFoundException ex) {
-            getLog().error("", ex);
-        } finally {
-            if (ois != null) {
-                try {
-                    ois.close();
-                } catch (IOException ex) {
-                    getLog().error("", ex);
-                }
-            }
-        }
-        return ret;
-    }
     //</editor-fold>
-
 }

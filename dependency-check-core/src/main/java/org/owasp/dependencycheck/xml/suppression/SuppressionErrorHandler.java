@@ -17,6 +17,9 @@
  */
 package org.owasp.dependencycheck.xml.suppression;
 
+import org.owasp.dependencycheck.utils.XmlUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.xml.sax.ErrorHandler;
 import org.xml.sax.SAXException;
 import org.xml.sax.SAXParseException;
@@ -31,34 +34,7 @@ public class SuppressionErrorHandler implements ErrorHandler {
     /**
      * The logger.
      */
-    //private static final Logger LOGGER = LoggerFactory.getLogger(SuppressionErrorHandler.class);
-
-    /**
-     * Builds a prettier exception message.
-     *
-     * @param ex the SAXParseException
-     * @return an easier to read exception message
-     */
-    private String getPrettyParseExceptionInfo(SAXParseException ex) {
-
-        final StringBuilder sb = new StringBuilder();
-
-        if (ex.getSystemId() != null) {
-            sb.append("systemId=").append(ex.getSystemId()).append(", ");
-        }
-        if (ex.getPublicId() != null) {
-            sb.append("publicId=").append(ex.getPublicId()).append(", ");
-        }
-        if (ex.getLineNumber() > 0) {
-            sb.append("Line=").append(ex.getLineNumber());
-        }
-        if (ex.getColumnNumber() > 0) {
-            sb.append(", Column=").append(ex.getColumnNumber());
-        }
-        sb.append(": ").append(ex.getMessage());
-
-        return sb.toString();
-    }
+    private static final Logger LOGGER = LoggerFactory.getLogger(SuppressionErrorHandler.class);
 
     /**
      * Logs warnings.
@@ -68,7 +44,7 @@ public class SuppressionErrorHandler implements ErrorHandler {
      */
     @Override
     public void warning(SAXParseException ex) throws SAXException {
-        //LOGGER.debug("", ex);
+        LOGGER.trace("", ex);
     }
 
     /**
@@ -79,17 +55,17 @@ public class SuppressionErrorHandler implements ErrorHandler {
      */
     @Override
     public void error(SAXParseException ex) throws SAXException {
-        throw new SAXException(getPrettyParseExceptionInfo(ex));
+        throw new SAXException(XmlUtils.getPrettyParseExceptionInfo(ex));
     }
 
     /**
      * Handles fatal exceptions.
      *
      * @param ex a fatal exception
-     * @throws SAXException is always
+     * @throws SAXException is always thrown
      */
     @Override
     public void fatalError(SAXParseException ex) throws SAXException {
-        throw new SAXException(getPrettyParseExceptionInfo(ex));
+        throw new SAXException(XmlUtils.getPrettyParseExceptionInfo(ex));
     }
 }

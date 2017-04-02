@@ -27,14 +27,14 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.io.UnsupportedEncodingException;
-import java.text.DateFormat;
-import java.text.SimpleDateFormat;
-import java.util.Date;
 import java.util.List;
 import org.apache.velocity.VelocityContext;
 import org.apache.velocity.app.VelocityEngine;
 import org.apache.velocity.context.Context;
 import org.apache.velocity.runtime.RuntimeConstants;
+import org.joda.time.DateTime;
+import org.joda.time.format.DateTimeFormat;
+import org.joda.time.format.DateTimeFormatter;
 import org.owasp.dependencycheck.analyzer.Analyzer;
 import org.owasp.dependencycheck.data.nvdcve.DatabaseProperties;
 import org.owasp.dependencycheck.dependency.Dependency;
@@ -103,13 +103,17 @@ public class ReportGenerator {
         context = createContext();
 
         velocityEngine.init();
-
-        final DateFormat dateFormat = new SimpleDateFormat("MMM d, yyyy 'at' HH:mm:ss z");
-        final DateFormat dateFormatXML = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
-        final Date d = new Date();
-        final String scanDate = dateFormat.format(d);
-        final String scanDateXML = dateFormatXML.format(d);
         final EscapeTool enc = new EscapeTool();
+
+        final DateTime dt = new DateTime();
+        final DateTimeFormatter dateFormat = DateTimeFormat.forPattern("MMM d, yyyy 'at' HH:mm:ss z");
+        final DateTimeFormatter dateFormatXML = DateTimeFormat.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
+
+//        final Date d = new Date();
+//        final DateFormat dateFormat = new SimpleDateFormat("MMM d, yyyy 'at' HH:mm:ss z");
+//        final DateFormat dateFormatXML = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
+        final String scanDate = dateFormat.print(dt);
+        final String scanDateXML = dateFormatXML.print(dt);
 
         context.put("applicationName", applicationName);
         context.put("dependencies", dependencies);
@@ -167,7 +171,8 @@ public class ReportGenerator {
      *
      * @param outputDir the path where the reports should be written
      * @param format the format the report should be written in
-     * @throws ReportException is thrown if there is an error writing out the reports
+     * @throws ReportException is thrown if there is an error writing out the
+     * reports
      */
     public void generateReports(String outputDir, Format format) throws ReportException {
         if (format == Format.XML || format == Format.ALL) {
@@ -235,55 +240,39 @@ public class ReportGenerator {
         InputStream input = null;
         String templatePath = null;
         final File f = new File(templateName);
-        if (f.exists() && f.isFile()) {
-            try {
-                templatePath = templateName;
-                input = new FileInputStream(f);
-            } catch (FileNotFoundException ex) {
-                throw new ReportException("Unable to locate template file: " + templateName, ex);
-            }
-        } else {
-            templatePath = "templates/" + templateName + ".vsl";
-            input = this.getClass().getClassLoader().getResourceAsStream(templatePath);
-        }
-        if (input == null) {
-            throw new ReportException("Template file doesn't exist: " + templatePath);
-        }
-
-        InputStreamReader reader = null;
-        OutputStreamWriter writer = null;
-
         try {
-            reader = new InputStreamReader(input, "UTF-8");
-            writer = new OutputStreamWriter(outputStream, "UTF-8");
-            if (!velocityEngine.evaluate(context, writer, templatePath, reader)) {
-                throw new ReportException("Failed to convert the template into html.");
+            if (f.exists() && f.isFile()) {
+                try {
+                    templatePath = templateName;
+                    input = new FileInputStream(f);
+                } catch (FileNotFoundException ex) {
+                    throw new ReportException("Unable to locate template file: " + templateName, ex);
+                }
+            } else {
+                templatePath = "templates/" + templateName + ".vsl";
+                input = this.getClass().getClassLoader().getResourceAsStream(templatePath);
             }
-            writer.flush();
-        } catch (UnsupportedEncodingException ex) {
-            throw new ReportException("Unable to generate the report using UTF-8", ex);
-        } catch (IOException ex) {
-            throw new ReportException("Unable to write the report", ex);
+            if (input == null) {
+                throw new ReportException("Template file doesn't exist: " + templatePath);
+            }
+
+            try (InputStreamReader reader = new InputStreamReader(input, "UTF-8");
+                    OutputStreamWriter writer = new OutputStreamWriter(outputStream, "UTF-8")) {
+                if (!velocityEngine.evaluate(context, writer, templatePath, reader)) {
+                    throw new ReportException("Failed to convert the template into html.");
+                }
+                writer.flush();
+            } catch (UnsupportedEncodingException ex) {
+                throw new ReportException("Unable to generate the report using UTF-8", ex);
+            } catch (IOException ex) {
+                throw new ReportException("Unable to write the report", ex);
+            }
         } finally {
-            if (writer != null) {
+            if (input != null) {
                 try {
-                    writer.close();
+                    input.close();
                 } catch (IOException ex) {
-                    LOGGER.trace("", ex);
-                }
-            }
-            if (outputStream != null) {
-                try {
-                    outputStream.close();
-                } catch (IOException ex) {
-                    LOGGER.trace("", ex);
-                }
-            }
-            if (reader != null) {
-                try {
-                    reader.close();
-                } catch (IOException ex) {
-                    LOGGER.trace("", ex);
+                    LOGGER.trace("Error closing input", ex);
                 }
             }
         }
@@ -310,21 +299,10 @@ public class ReportGenerator {
                 throw new ReportException("Unable to create directory '" + outFile.getParentFile().getAbsolutePath() + "'.");
             }
         }
-
-        OutputStream outputSteam = null;
-        try {
-            outputSteam = new FileOutputStream(outFile);
+        try (OutputStream outputSteam = new FileOutputStream(outFile)) {
             generateReport(templateName, outputSteam);
-        } catch (FileNotFoundException ex) {
+        } catch (IOException ex) {
             throw new ReportException("Unable to write to file: " + outFile, ex);
-        } finally {
-            if (outputSteam != null) {
-                try {
-                    outputSteam.close();
-                } catch (IOException ex) {
-                    LOGGER.trace("ignore", ex);
-                }
-            }
         }
     }
 }

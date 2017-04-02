@@ -19,12 +19,18 @@ package org.owasp.dependencycheck.data.update;
 
 import java.net.MalformedURLException;
 import java.util.Calendar;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
+import java.net.URL;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.owasp.dependencycheck.data.nvdcve.CveDB;
 import org.owasp.dependencycheck.data.nvdcve.DatabaseException;
 import org.owasp.dependencycheck.data.nvdcve.DatabaseProperties;
@@ -36,6 +42,7 @@ import org.owasp.dependencycheck.data.update.nvd.NvdCveInfo;
 import org.owasp.dependencycheck.data.update.nvd.ProcessTask;
 import org.owasp.dependencycheck.data.update.nvd.UpdateableNvdCve;
 import org.owasp.dependencycheck.utils.DateUtil;
+import org.owasp.dependencycheck.utils.Downloader;
 import org.owasp.dependencycheck.utils.DownloadFailedException;
 import org.owasp.dependencycheck.utils.InvalidSettingException;
 import org.owasp.dependencycheck.utils.Settings;
@@ -47,16 +54,38 @@ import org.slf4j.LoggerFactory;
  *
  * @author Jeremy Long
  */
-public class NvdCveUpdater extends BaseUpdater implements CachedWebDataSource {
+public class NvdCveUpdater implements CachedWebDataSource {
 
     /**
      * The logger.
      */
     private static final Logger LOGGER = LoggerFactory.getLogger(NvdCveUpdater.class);
     /**
-     * The max thread pool size to use when downloading files.
+     * The thread pool size to use for CPU-intense tasks.
      */
-    public static final int MAX_THREAD_POOL_SIZE = Settings.getInt(Settings.KEYS.MAX_DOWNLOAD_THREAD_POOL_SIZE, 3);
+    private static final int PROCESSING_THREAD_POOL_SIZE = Runtime.getRuntime().availableProcessors();
+    /**
+     * The thread pool size to use when downloading files.
+     */
+    private static final int DOWNLOAD_THREAD_POOL_SIZE = Math.round(1.5f * Runtime.getRuntime().availableProcessors());
+    /**
+     * ExecutorService for CPU-intense processing tasks.
+     */
+    private ExecutorService processingExecutorService = null;
+    /**
+     * ExecutorService for tasks that involve blocking activities and are not
+     * very CPU-intense, e.g. downloading files.
+     */
+    private ExecutorService downloadExecutorService = null;
+
+    /**
+     * Reference to the DAO.
+     */
+    private CveDB cveDb = null;
+    /**
+     * The properties obtained from the database.
+     */
+    private DatabaseProperties dbProperties = null;
 
     /**
      * Downloads the latest NVD CVE XML file from the web and imports it into
@@ -68,19 +97,33 @@ public class NvdCveUpdater extends BaseUpdater implements CachedWebDataSource {
     @Override
     public void update() throws UpdateException {
         try {
-            openDataStores();
+            if (!Settings.getBoolean(Settings.KEYS.UPDATE_NVDCVE_ENABLED, true)) {
+                return;
+            }
+        } catch (InvalidSettingException ex) {
+            LOGGER.trace("invalid setting UPDATE_NVDCVE_ENABLED", ex);
+        }
+
+        try {
             boolean autoUpdate = true;
             try {
                 autoUpdate = Settings.getBoolean(Settings.KEYS.AUTO_UPDATE);
             } catch (InvalidSettingException ex) {
                 LOGGER.debug("Invalid setting for auto-update; using true.");
             }
-            if (autoUpdate && checkUpdate()) {
+            if (!autoUpdate) {
+                return;
+            }
+            initializeExecutorServices();
+            cveDb = CveDB.getInstance();
+            dbProperties = cveDb.getDatabaseProperties();
+
+            if (checkUpdate()) {
                 final UpdateableNvdCve updateable = getUpdatesNeeded();
                 if (updateable.isUpdateNeeded()) {
                     performUpdate(updateable);
                 }
-                getProperties().save(DatabaseProperties.LAST_CHECKED, Long.toString(System.currentTimeMillis()));
+                dbProperties.save(DatabaseProperties.LAST_CHECKED, Long.toString(System.currentTimeMillis()));
             }
         } catch (MalformedURLException ex) {
             throw new UpdateException("NVD CVE properties files contain an invalid URL, unable to update the data to use the most current data.", ex);
@@ -92,8 +135,33 @@ public class NvdCveUpdater extends BaseUpdater implements CachedWebDataSource {
                         "If you are behind a proxy you may need to configure dependency-check to use the proxy.");
             }
             throw new UpdateException("Unable to download the NVD CVE data.", ex);
+        } catch (DatabaseException ex) {
+            throw new UpdateException("Database Exception, unable to update the data to use the most current data.", ex);
         } finally {
-            closeDataStores();
+            shutdownExecutorServices();
+        }
+    }
+
+    /**
+     * Initialize the executor services for download and processing of the NVD
+     * CVE XML data.
+     */
+    protected void initializeExecutorServices() {
+        processingExecutorService = Executors.newFixedThreadPool(PROCESSING_THREAD_POOL_SIZE);
+        downloadExecutorService = Executors.newFixedThreadPool(DOWNLOAD_THREAD_POOL_SIZE);
+        LOGGER.debug("#download   threads: {}", DOWNLOAD_THREAD_POOL_SIZE);
+        LOGGER.debug("#processing threads: {}", PROCESSING_THREAD_POOL_SIZE);
+    }
+
+    /**
+     * Shutdown and cleanup of resources used by the executor services.
+     */
+    private void shutdownExecutorServices() {
+        if (processingExecutorService != null) {
+            processingExecutorService.shutdownNow();
+        }
+        if (downloadExecutorService != null) {
+            downloadExecutorService.shutdownNow();
         }
     }
 
@@ -115,7 +183,7 @@ public class NvdCveUpdater extends BaseUpdater implements CachedWebDataSource {
         if (dataExists() && 0 < validForHours) {
             // ms Valid = valid (hours) x 60 min/hour x 60 sec/min x 1000 ms/sec
             final long msValid = validForHours * 60L * 60L * 1000L;
-            final long lastChecked = Long.parseLong(getProperties().getProperty(DatabaseProperties.LAST_CHECKED, "0"));
+            final long lastChecked = Long.parseLong(dbProperties.getProperty(DatabaseProperties.LAST_CHECKED, "0"));
             final long now = System.currentTimeMillis();
             proceed = (now - lastChecked) > msValid;
             if (!proceed) {
@@ -133,17 +201,11 @@ public class NvdCveUpdater extends BaseUpdater implements CachedWebDataSource {
      * @return true if the database contains data
      */
     private boolean dataExists() {
-        CveDB cve = null;
         try {
-            cve = new CveDB();
-            cve.open();
+            final CveDB cve = CveDB.getInstance();
             return cve.dataExists();
         } catch (DatabaseException ex) {
             return false;
-        } finally {
-            if (cve != null) {
-                cve.close();
-            }
         }
     }
 
@@ -170,41 +232,28 @@ public class NvdCveUpdater extends BaseUpdater implements CachedWebDataSource {
             LOGGER.info("NVD CVE requires several updates; this could take a couple of minutes.");
         }
 
-        final int poolSize = (MAX_THREAD_POOL_SIZE < maxUpdates) ? MAX_THREAD_POOL_SIZE : maxUpdates;
-
-        final ExecutorService downloadExecutors = Executors.newFixedThreadPool(poolSize);
-        final ExecutorService processExecutor = Executors.newSingleThreadExecutor();
-        final Set<Future<Future<ProcessTask>>> downloadFutures = new HashSet<Future<Future<ProcessTask>>>(maxUpdates);
+        final Set<Future<Future<ProcessTask>>> downloadFutures = new HashSet<>(maxUpdates);
         for (NvdCveInfo cve : updateable) {
             if (cve.getNeedsUpdate()) {
-                final DownloadTask call = new DownloadTask(cve, processExecutor, getCveDB(), Settings.getInstance());
-                downloadFutures.add(downloadExecutors.submit(call));
+                final DownloadTask call = new DownloadTask(cve, processingExecutorService, cveDb, Settings.getInstance());
+                downloadFutures.add(downloadExecutorService.submit(call));
             }
         }
-        downloadExecutors.shutdown();
 
         //next, move the future future processTasks to just future processTasks
-        final Set<Future<ProcessTask>> processFutures = new HashSet<Future<ProcessTask>>(maxUpdates);
+        final Set<Future<ProcessTask>> processFutures = new HashSet<>(maxUpdates);
         for (Future<Future<ProcessTask>> future : downloadFutures) {
-            Future<ProcessTask> task = null;
+            Future<ProcessTask> task;
             try {
                 task = future.get();
             } catch (InterruptedException ex) {
-                downloadExecutors.shutdownNow();
-                processExecutor.shutdownNow();
-
                 LOGGER.debug("Thread was interrupted during download", ex);
                 throw new UpdateException("The download was interrupted", ex);
             } catch (ExecutionException ex) {
-                downloadExecutors.shutdownNow();
-                processExecutor.shutdownNow();
-
                 LOGGER.debug("Thread was interrupted during download execution", ex);
                 throw new UpdateException("The execution of the download was interrupted", ex);
             }
             if (task == null) {
-                downloadExecutors.shutdownNow();
-                processExecutor.shutdownNow();
                 LOGGER.debug("Thread was interrupted during download");
                 throw new UpdateException("The download was interrupted; unable to complete the update");
             } else {
@@ -219,22 +268,18 @@ public class NvdCveUpdater extends BaseUpdater implements CachedWebDataSource {
                     throw task.getException();
                 }
             } catch (InterruptedException ex) {
-                processExecutor.shutdownNow();
                 LOGGER.debug("Thread was interrupted during processing", ex);
                 throw new UpdateException(ex);
             } catch (ExecutionException ex) {
-                processExecutor.shutdownNow();
                 LOGGER.debug("Execution Exception during process", ex);
                 throw new UpdateException(ex);
-            } finally {
-                processExecutor.shutdown();
             }
         }
 
         if (maxUpdates >= 1) { //ensure the modified file date gets written (we may not have actually updated it)
-            getProperties().save(updateable.get(MODIFIED));
+            dbProperties.save(updateable.get(MODIFIED));
             LOGGER.info("Begin database maintenance.");
-            getCveDB().cleanupDatabase();
+            cveDb.cleanupDatabase();
             LOGGER.info("End database maintenance.");
         }
     }
@@ -254,7 +299,8 @@ public class NvdCveUpdater extends BaseUpdater implements CachedWebDataSource {
      * updated properties file
      */
     protected final UpdateableNvdCve getUpdatesNeeded() throws MalformedURLException, DownloadFailedException, UpdateException {
-        UpdateableNvdCve updates = null;
+        LOGGER.info("starting getUpdatesNeeded() ...");
+        UpdateableNvdCve updates;
         try {
             updates = retrieveCurrentTimestampsFromWeb();
         } catch (InvalidDataException ex) {
@@ -269,14 +315,24 @@ public class NvdCveUpdater extends BaseUpdater implements CachedWebDataSource {
         if (updates == null) {
             throw new DownloadFailedException("Unable to retrieve the timestamps of the currently published NVD CVE data");
         }
-        if (!getProperties().isEmpty()) {
+        if (dbProperties != null && !dbProperties.isEmpty()) {
             try {
-                final long lastUpdated = Long.parseLong(getProperties().getProperty(DatabaseProperties.LAST_UPDATED, "0"));
+                final int startYear = Settings.getInt(Settings.KEYS.CVE_START_YEAR, 2002);
+                final int endYear = Calendar.getInstance().get(Calendar.YEAR);
+                boolean needsFullUpdate = false;
+                for (int y = startYear; y <= endYear; y++) {
+                    final long val = Long.parseLong(dbProperties.getProperty(DatabaseProperties.LAST_UPDATED_BASE + y, "0"));
+                    if (val == 0) {
+                        needsFullUpdate = true;
+                    }
+                }
+
+                final long lastUpdated = Long.parseLong(dbProperties.getProperty(DatabaseProperties.LAST_UPDATED, "0"));
                 final long now = System.currentTimeMillis();
                 final int days = Settings.getInt(Settings.KEYS.CVE_MODIFIED_VALID_FOR_DAYS, 7);
-                if (lastUpdated == updates.getTimeStamp(MODIFIED)) {
+                if (!needsFullUpdate && lastUpdated == updates.getTimeStamp(MODIFIED)) {
                     updates.clear(); //we don't need to update anything.
-                } else if (DateUtil.withinDateRange(lastUpdated, now, days)) {
+                } else if (!needsFullUpdate && DateUtil.withinDateRange(lastUpdated, now, days)) {
                     for (NvdCveInfo entry : updates) {
                         if (MODIFIED.equals(entry.getId())) {
                             entry.setNeedsUpdate(true);
@@ -291,7 +347,7 @@ public class NvdCveUpdater extends BaseUpdater implements CachedWebDataSource {
                         } else {
                             long currentTimestamp = 0;
                             try {
-                                currentTimestamp = Long.parseLong(getProperties().getProperty(DatabaseProperties.LAST_UPDATED_BASE
+                                currentTimestamp = Long.parseLong(dbProperties.getProperty(DatabaseProperties.LAST_UPDATED_BASE
                                         + entry.getId(), "0"));
                             } catch (NumberFormatException ex) {
                                 LOGGER.debug("Error parsing '{}' '{}' from nvdcve.lastupdated",
@@ -326,20 +382,101 @@ public class NvdCveUpdater extends BaseUpdater implements CachedWebDataSource {
     private UpdateableNvdCve retrieveCurrentTimestampsFromWeb()
             throws MalformedURLException, DownloadFailedException, InvalidDataException, InvalidSettingException {
 
-        final UpdateableNvdCve updates = new UpdateableNvdCve();
-        updates.add(MODIFIED, Settings.getString(Settings.KEYS.CVE_MODIFIED_20_URL),
-                Settings.getString(Settings.KEYS.CVE_MODIFIED_12_URL),
-                false);
-
         final int start = Settings.getInt(Settings.KEYS.CVE_START_YEAR);
         final int end = Calendar.getInstance().get(Calendar.YEAR);
+
+        final Map<String, Long> lastModifiedDates = retrieveLastModifiedDates(start, end);
+
+        final UpdateableNvdCve updates = new UpdateableNvdCve();
+
         final String baseUrl20 = Settings.getString(Settings.KEYS.CVE_SCHEMA_2_0);
         final String baseUrl12 = Settings.getString(Settings.KEYS.CVE_SCHEMA_1_2);
         for (int i = start; i <= end; i++) {
-            updates.add(Integer.toString(i), String.format(baseUrl20, i),
-                    String.format(baseUrl12, i),
-                    true);
+            final String url = String.format(baseUrl20, i);
+            updates.add(Integer.toString(i), url, String.format(baseUrl12, i),
+                    lastModifiedDates.get(url), true);
         }
+
+        final String url = Settings.getString(Settings.KEYS.CVE_MODIFIED_20_URL);
+        updates.add(MODIFIED, url, Settings.getString(Settings.KEYS.CVE_MODIFIED_12_URL),
+                lastModifiedDates.get(url), false);
+
         return updates;
+    }
+
+    /**
+     * Retrieves the timestamps from the NVD CVE meta data file.
+     *
+     * @param startYear the first year whose item to check for the timestamp
+     * @param endYear the last year whose item to check for the timestamp
+     * @return the timestamps from the currently published NVD CVE downloads
+     * page
+     * @throws MalformedURLException thrown if the URL for the NVD CCE Meta data
+     * is incorrect.
+     * @throws DownloadFailedException thrown if there is an error downloading
+     * the NVD CVE meta data file
+     */
+    private Map<String, Long> retrieveLastModifiedDates(int startYear, int endYear)
+            throws MalformedURLException, DownloadFailedException {
+
+        final Set<String> urls = new HashSet<>();
+        final String baseUrl20 = Settings.getString(Settings.KEYS.CVE_SCHEMA_2_0);
+        for (int i = startYear; i <= endYear; i++) {
+            final String url = String.format(baseUrl20, i);
+            urls.add(url);
+        }
+        urls.add(Settings.getString(Settings.KEYS.CVE_MODIFIED_20_URL));
+
+        final Map<String, Future<Long>> timestampFutures = new HashMap<>();
+        for (String url : urls) {
+            final TimestampRetriever timestampRetriever = new TimestampRetriever(url);
+            final Future<Long> future = downloadExecutorService.submit(timestampRetriever);
+            timestampFutures.put(url, future);
+        }
+
+        final Map<String, Long> lastModifiedDates = new HashMap<>();
+        for (String url : urls) {
+            final Future<Long> timestampFuture = timestampFutures.get(url);
+            final long timestamp;
+            try {
+                timestamp = timestampFuture.get(60, TimeUnit.SECONDS);
+            } catch (InterruptedException | ExecutionException | TimeoutException e) {
+                throw new DownloadFailedException(e);
+            }
+            lastModifiedDates.put(url, timestamp);
+        }
+
+        return lastModifiedDates;
+    }
+
+    /**
+     * Retrieves the last modified timestamp from a NVD CVE meta data file.
+     */
+    private static class TimestampRetriever implements Callable<Long> {
+
+        /**
+         * The URL to obtain the timestamp from.
+         */
+        private final String url;
+
+        /**
+         * Instantiates a new timestamp retriever object.
+         *
+         * @param url the URL to hit
+         */
+        TimestampRetriever(String url) {
+            this.url = url;
+        }
+
+        @Override
+        public Long call() throws Exception {
+            LOGGER.debug("Checking for updates from: {}", url);
+            try {
+                Settings.initialize();
+                return Downloader.getLastModified(new URL(url));
+            } finally {
+                Settings.cleanup(false);
+            }
+        }
     }
 }

@@ -20,6 +20,7 @@ package org.owasp.dependencycheck.data.cpe;
 import java.io.Serializable;
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
+import org.apache.commons.lang3.StringUtils;
 
 /**
  * A CPE entry containing the name, vendor, product, and version.
@@ -31,7 +32,7 @@ public class IndexEntry implements Serializable {
     /**
      * the serial version uid.
      */
-    static final long serialVersionUID = 8011924485946326934L;
+    private static final long serialVersionUID = 8011924485946326934L;
     /**
      * The vendor name.
      */
@@ -143,7 +144,8 @@ public class IndexEntry implements Serializable {
      */
     public void parseName(String cpeName) throws UnsupportedEncodingException {
         if (cpeName != null && cpeName.length() > 7) {
-            final String[] data = cpeName.substring(7).split(":");
+            final String cpeNameWithoutPrefix = cpeName.substring(7);
+            final String[] data = StringUtils.split(cpeNameWithoutPrefix, ':');
             if (data.length >= 1) {
                 vendor = URLDecoder.decode(data[0].replace("+", "%2B"), "UTF-8");
                 if (data.length >= 2) {
@@ -172,10 +174,7 @@ public class IndexEntry implements Serializable {
         if ((this.vendor == null) ? (other.vendor != null) : !this.vendor.equals(other.vendor)) {
             return false;
         }
-        if ((this.product == null) ? (other.product != null) : !this.product.equals(other.product)) {
-            return false;
-        }
-        return true;
+        return !((this.product == null) ? (other.product != null) : !this.product.equals(other.product));
     }
 
     /**

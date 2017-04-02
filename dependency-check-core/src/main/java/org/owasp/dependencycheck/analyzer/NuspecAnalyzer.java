@@ -33,7 +33,6 @@ import org.slf4j.LoggerFactory;
 import java.io.FileFilter;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
-import java.io.IOException;
 import org.owasp.dependencycheck.exception.InitializationException;
 
 /**
@@ -127,27 +126,15 @@ public class NuspecAnalyzer extends AbstractFileTypeAnalyzer {
      * @throws AnalysisException when there's an exception during analysis
      */
     @Override
-    public void analyzeFileType(Dependency dependency, Engine engine) throws AnalysisException {
+    public void analyzeDependency(Dependency dependency, Engine engine) throws AnalysisException {
         LOGGER.debug("Checking Nuspec file {}", dependency);
         try {
             final NuspecParser parser = new XPathNuspecParser();
             NugetPackage np = null;
-            FileInputStream fis = null;
-            try {
-                fis = new FileInputStream(dependency.getActualFilePath());
+            try (FileInputStream fis = new FileInputStream(dependency.getActualFilePath())) {
                 np = parser.parse(fis);
-            } catch (NuspecParseException ex) {
+            } catch (NuspecParseException | FileNotFoundException ex) {
                 throw new AnalysisException(ex);
-            } catch (FileNotFoundException ex) {
-                throw new AnalysisException(ex);
-            } finally {
-                if (fis != null) {
-                    try {
-                        fis.close();
-                    } catch (IOException e) {
-                        LOGGER.debug("Error closing input stream");
-                    }
-                }
             }
 
             if (np.getOwners() != null) {

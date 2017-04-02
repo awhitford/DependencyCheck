@@ -47,17 +47,15 @@ public class ComposerLockAnalyzerTest extends BaseDBTestCase {
     /**
      * The analyzer to test.
      */
-    ComposerLockAnalyzer analyzer;
+    private ComposerLockAnalyzer analyzer;
 
     /**
      * Correctly setup the analyzer for testing.
      *
      * @throws Exception thrown if there is a problem
      */
-    @Override
     @Before
     public void setUp() throws Exception {
-        super.setUp();
         analyzer = new ComposerLockAnalyzer();
         analyzer.setFilesMatched(true);
         analyzer.initialize();
