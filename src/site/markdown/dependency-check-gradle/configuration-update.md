@@ -1,40 +1,54 @@
 Tasks
 ====================
 
-Task                                             | Description
--------------------------------------------------|-----------------------
-[dependencyCheck](configuration.html)            | Runs dependency-check against the project and generates a report.
-dependencyCheckUpdate                            | Updates the local cache of the NVD data from NIST.
-[dependencyCheckPurge](configuration-purge.html) | Deletes the local copy of the NVD. This is used to force a refresh of the data.
+Task                                                     | Description
+---------------------------------------------------------|-----------------------
+[dependencyCheckAnalyze](configuration.html)             | Runs dependency-check against the project and generates a report.
+[dependencyCheckAggregate](configuration-aggregate.html) | Runs dependency-check against a multi-project build and generates a report.
+dependencyCheckUpdate                                    | Updates the local cache of the NVD data from NIST.
+[dependencyCheckPurge](configuration-purge.html)         | Deletes the local copy of the NVD. This is used to force a refresh of the data.
 
-Configuration: dependencyCheckUpdate
+Configuration
 ====================
-The following properties can be configured for the dependencyCheckUpdate task:
+
+```groovy
+buildscript {
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'org.owasp:dependency-check-gradle:${project.version}'
+    }
+}
+apply plugin: 'org.owasp.dependencycheck'
+
+check.dependsOn dependencyCheckUpdate
+```
 
 Property             | Description                        | Default Value
 ---------------------|------------------------------------|------------------
 cveValidForHours     | Sets the number of hours to wait before checking for new updates from the NVD.                                     | 4
+failOnError          | Fails the build if an error occurs during the dependency-check analysis.                                           | true
 
 #### Example
 ```groovy
-dependencyCheckUpdate {
+dependencyCheck {
     cveValidForHours=1
 }
 ```
 
 ### Proxy Configuration
 
-Property          | Description                        | Default Value
-------------------|------------------------------------|------------------
-server            | The proxy server.                  | &nbsp;
-port              | The proxy port.                    | &nbsp;
-username          | Defines the proxy user name.       | &nbsp;
-password          | Defines the proxy password.        | &nbsp;
-connectionTimeout | The URL Connection Timeout.        | &nbsp;
+Config Group | Property          | Description                        | Default Value
+-------------|-------------------|------------------------------------|------------------
+proxy        | server            | The proxy server.                  | &nbsp;
+proxy        | port              | The proxy port.                    | &nbsp;
+proxy        | username          | Defines the proxy user name.       | &nbsp;
+proxy        | password          | Defines the proxy password.        | &nbsp;
 
 #### Example
 ```groovy
-dependencyCheckUpdate {
+dependencyCheck {
     proxy {
         server=some.proxy.server
         port=8989
@@ -50,10 +64,10 @@ Note, if ANY of the cve configuration group are set - they should all be set to 
 
 Config Group | Property          | Description                                                                                 | Default Value
 -------------|-------------------|---------------------------------------------------------------------------------------------|------------------
-cve          | url12Modified     | URL for the modified CVE 1.2.                                                               | https://nvd.nist.gov/download/nvdcve-Modified.xml.gz
-cve          | url20Modified     | URL for the modified CVE 2.0.                                                               | https://nvd.nist.gov/feeds/xml/cve/nvdcve-2.0-Modified.xml.gz
-cve          | url12Base         | Base URL for each year's CVE 1.2, the %d will be replaced with the year.                    | https://nvd.nist.gov/download/nvdcve-%d.xml.gz
-cve          | url20Base         | Base URL for each year's CVE 2.0, the %d will be replaced with the year.                    | https://nvd.nist.gov/feeds/xml/cve/nvdcve-2.0-%d.xml.gz
+cve          | url12Modified     | URL for the modified CVE 1.2.                                                               | https://nvd.nist.gov/feeds/xml/cve/1.2/nvdcve-modified.xml.gz
+cve          | url20Modified     | URL for the modified CVE 2.0.                                                               | https://nvd.nist.gov/feeds/xml/cve/2.0/nvdcve-2.0-Modified.xml.gz
+cve          | url12Base         | Base URL for each year's CVE 1.2, the %d will be replaced with the year.                    | https://nvd.nist.gov/feeds/xml/cve/1.2/nvdcve-%d.xml.gz
+cve          | url20Base         | Base URL for each year's CVE 2.0, the %d will be replaced with the year.                    | https://nvd.nist.gov/feeds/xml/cve/2.0/nvdcve-2.0-%d.xml.gz
 data         | directory         | Sets the data directory to hold SQL CVEs contents. This should generally not be changed.    | &nbsp;
 data         | driver            | The name of the database driver. Example: org.h2.Driver.                                    | &nbsp;
 data         | driverPath        | The path to the database driver JAR file; only used if the driver is not in the class path. | &nbsp;
@@ -63,7 +77,7 @@ data         | password          | The password used when connecting to the data
 
 #### Example
 ```groovy
-dependencyCheckUpdate {
+dependencyCheck {
     data {
         directory='d:/nvd'
     }

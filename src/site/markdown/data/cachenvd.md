@@ -24,11 +24,8 @@ Build Nist-Data-Mirror
 ----------------------
 
 1. Perform a "git clone" of [Nist-Data-Mirror](https://github.com/stevespringett/nist-data-mirror/)
-2. Install gradle, if necessary. See [here](http://gradle.org/gradle-download/)
-   or your Linux distributions package management system. (e.g.,
-   `sudo apt-get install gradle`).
-3. Follow the [build instructions](https://github.com/stevespringett/nist-data-mirror/blob/master/README.md#user-content-build).
-   You will be left with a build artifact called `nist-data-mirror-1.0.0.jar`.
+2. Follow the build and run [instructions](https://github.com/stevespringett/nist-data-mirror/blob/master/README.md#user-content-building).
+   You will be left with a build artifact called `nist-data-mirror.jar`.
 
 Set Up a Daily NVD Download Job
 -------------------------------
@@ -81,7 +78,7 @@ $CLI_SCRIPT --cveUrl20Base $NVD/nvdcve-2.0-%d.xml.gz \
 ```
 
 The script takes advantage of the `date` command's ability to parse a variety
-of date formats. The following invokation would successfully point to the
+of date formats. The following invocation would successfully point to the
 `~/NVD/2015-08-03` folder.
 
     $ ./dep-check-date.sh ~/NVD "08/03/2015" -app Foo -scan /path/to/Foo --out ~/DCreports/FooFollowup/

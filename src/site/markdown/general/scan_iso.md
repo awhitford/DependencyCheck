@@ -13,7 +13,7 @@ pair of international file system standards published by
 and ISO/IEC 13346, a.k.a. [UDF](https://en.wikipedia.org/wiki/Universal_Disk_Format). Other types of disk images (e.g.,
 [VHD](https://en.wikipedia.org/wiki/VHD_%28file_format%29)) are outside the
 scope of this article, though the ideas presented here may likely be
-succesfully applied.
+successfully applied.
 
 Linux
 -----
@@ -30,7 +30,7 @@ command with `sudo`.
 $ sudo mount -o loop foo.iso /mnt/foo
 ```
 
-Next, you can use Dependency-Check's [command line tool](dependency-check-cli/)
+Next, you can use Dependency-Check's [command line tool](../dependency-check-cli/index.html)
 to scan the mount point. When you are finished, run the
 [umount](http://linux.die.net/man/8/umount) command with root privileges:
 
